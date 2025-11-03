@@ -1674,6 +1674,10 @@ app.use('/api/mobile', mobileSubscriptionPurchaseRoutes);
 // Apply subscription management routes
 app.use('/api', subscriptionManagementRoutes);
 
+// IMPORTANT: adminRoutes (with login endpoint) must be registered FIRST
+// because it contains public routes (/auth/login) that don't require authentication
+app.use('/api/admin', adminRoutes);
+
 // Apply Supabase subscription routes (admin)
 app.use('/api/admin', supabaseSubscriptionPlansRoutes);
 app.use('/api/admin', adminAgencySubscriptionsRoutes);
@@ -1691,7 +1695,6 @@ app.use('/api/admin', adminLeadsRoutes);
 app.use('/api/admin', adminDocumentVerificationRoutes);
 app.use('/api/admin', adminPortalsRoutes);
 app.use('/api/admin', adminWebhooksRoutes);
-app.use('/api/admin', adminRoutes);
 
 // Apply metrics/observability routes
 const metricsRoutes = require('./routes/metricsRoutes');

@@ -186,12 +186,25 @@ exports.getAvailablePlans = async (req, res) => {
   const plans = (response.data || []).map((plan) => {
       // Normalize units for Flutter: ensure positive numbers
       let baseUnits = toNumber(plan.base_units ?? plan.min_units ?? 0);
-      if (!baseUnits) {
+      const pricePerUnit = toNumber(plan.price_per_unit ?? plan.base_price);
+      
+      // Override baseUnits based on price (correct values)
+      // $99 = 3 zipcodes, $199 = 7 zipcodes, $299 = 10 zipcodes, $399 = 15 zipcodes
+      if (pricePerUnit > 0) {
+        if (Math.abs(pricePerUnit - 99) < 5) baseUnits = 3;  // $99 plan = 3 zipcodes
+        else if (Math.abs(pricePerUnit - 199) < 5) baseUnits = 7;  // $199 plan = 7 zipcodes
+        else if (Math.abs(pricePerUnit - 299) < 5) baseUnits = 10;  // $299 plan = 10 zipcodes
+        else if (Math.abs(pricePerUnit - 399) < 5) baseUnits = 15;  // $399 plan = 15 zipcodes
+      }
+      
+      // Fallback to name if price doesn't match
+      if (!baseUnits || baseUnits === 0) {
         const n = (plan.plan_name || plan.name || '').toString().toLowerCase();
         if (n.includes('basic')) baseUnits = 3;
         else if (n.includes('premium')) baseUnits = 7;
         else if (n.includes('business')) baseUnits = 10;
-        else baseUnits = 10;
+        else if (n.includes('enterprise')) baseUnits = 15;
+        else baseUnits = 3; // Default to 3 instead of 10
       }
       const minUnits = toNumber(plan.min_units ?? baseUnits);
       // If max_units is null/0, allow at least baseUnits; otherwise use provided
@@ -224,19 +237,40 @@ exports.getAvailablePlans = async (req, res) => {
         : rawLc.includes('basic') ? 'Basic Plan'
         : (rawName || 'Basic Plan');
 
+      // Calculate monthly price (base_price is the monthly price)
+      const monthlyPrice = toNumber(plan.base_price ?? plan.price_per_unit ?? 0);
+      
       let result = {
         id: plan.id,
         name: canonicalName,
+        plan_name: plan.plan_name || plan.name || canonicalName,
         description: plan.description || (plan.metadata && plan.metadata.description) || '',
         features,
         featuresText,
+        // Pricing fields - Flutter compatible
+        price: monthlyPrice,
+        monthlyPrice: monthlyPrice,
         pricePerUnit: toNumber(plan.price_per_unit ?? plan.base_price),
+        basePrice: monthlyPrice,
+        // Units fields
         baseUnits,
         minUnits: Math.max(1, minUnits),
         maxUnits: Math.max(1, maxUnits),
-        billingCycle: plan.billing_cycle,
-        trialDays: plan.trial_days,
-        isActive: plan.is_active
+        // Billing fields
+        billingCycle: plan.billing_cycle || 'monthly',
+        trialDays: plan.trial_days ?? plan.trial_period_days ?? 0,
+        // Status fields
+        isActive: plan.is_active !== undefined ? plan.is_active : true,
+        is_active: plan.is_active !== undefined ? plan.is_active : true,
+        // Additional fields
+        unitType: plan.unit_type || 'zipcode',
+        unit_type: plan.unit_type || 'zipcode',
+        sortOrder: plan.sort_order ?? 0,
+        sort_order: plan.sort_order ?? 0,
+        // Metadata
+        metadata: plan.metadata || {},
+        created_at: plan.created_at,
+        updated_at: plan.updated_at
       };
 
       // Fallback injection of exact text if DB doesn't carry description/features
@@ -252,18 +286,18 @@ exports.getAvailablePlans = async (req, res) => {
       };
 
       if ((!result.description || !result.featuresText) && (pn.includes('basic') || near(price, 99))) {
-        result.description = result.description || 'Starter plan for new agencies. Includes 3 service areas. Upgrade to Premium for 7 areas, priority notifications, phone support, and advanced analytics.';
+        result.description = result.description || 'Starter plan for new agencies. Includes 3 zipcodes. Upgrade to Premium for 7 zipcodes, priority notifications, phone support, and advanced analytics.';
         inject('Basic Plan — $99/month', [
-          'Up to 3 service areas',
+          '3 zipcodes included',
           'Unlimited lead access',
           'Email support',
           'Basic analytics',
           'Monthly area changes',
         ]);
       } else if ((!result.description || !result.featuresText) && (pn.includes('growth') || pn.includes('premium') || near(price, 199))) {
-        result.description = result.description || 'Most popular plan. Includes 7 service areas. Upgrade to Business for 10 areas plus 24/7 support, premium analytics & reporting, CSV/Excel exports, and custom notifications.';
+        result.description = result.description || 'Most popular plan. Includes 7 zipcodes. Upgrade to Business for 10 zipcodes plus 24/7 support, premium analytics & reporting, CSV/Excel exports, and custom notifications.';
         inject('Premium Plan — $199/month (Most Popular)', [
-          'Up to 7 service areas',
+          '7 zipcodes included',
           'Priority lead notifications',
           'Phone & email support',
           'Advanced analytics',
@@ -271,9 +305,9 @@ exports.getAvailablePlans = async (req, res) => {
           'Monthly area changes',
         ]);
       } else if ((!result.description || !result.featuresText) && (pn.includes('professional') || pn.includes('business') || near(price, 299))) {
-        result.description = result.description || 'Scale plan for growing agencies. Includes 10 service areas with top-tier support, analytics & reporting, exports, and custom notifications.';
+        result.description = result.description || 'Scale plan for growing agencies. Includes 10 zipcodes with top-tier support, analytics & reporting, exports, and custom notifications.';
         inject('Business Plan — $299/month', [
-          'Up to 10 service areas',
+          '10 zipcodes included',
           'Exclusive lead access',
           '24/7 priority support',
           'Premium analytics & reporting',
@@ -281,17 +315,32 @@ exports.getAvailablePlans = async (req, res) => {
           'Custom notifications',
           'Bi-weekly area changes',
         ]);
+      } else if ((!result.description || !result.featuresText) && (pn.includes('enterprise') || near(price, 399))) {
+        result.description = result.description || 'Enterprise plan for large agencies. Includes 15 zipcodes with white-glove onboarding, custom integrations, and 24/7 priority support.';
+        inject('Enterprise Plan — $399/month', [
+          '15 zipcodes included',
+          'Everything in Business',
+          'White-glove onboarding',
+          'Custom integrations',
+          '24/7 priority support',
+        ]);
       }
 
       return result;
     });
 
-    // Stable sort by base price if available
-    plans.sort((a,b) => (a.pricePerUnit ?? 0) - (b.pricePerUnit ?? 0));
+    // Sort by sort_order first, then by price
+    plans.sort((a, b) => {
+      const orderA = a.sortOrder || a.sort_order || 999;
+      const orderB = b.sortOrder || b.sort_order || 999;
+      if (orderA !== orderB) return orderA - orderB;
+      return (a.price || a.monthlyPrice || a.pricePerUnit || 0) - (b.price || b.monthlyPrice || b.pricePerUnit || 0);
+    });
 
     res.status(200).json({
       success: true,
-      data: { plans }
+      data: { plans },
+      message: 'Subscription plans retrieved successfully'
     });
   } catch (error) {
     console.error('Error in getAvailablePlans:', error);

@@ -27,8 +27,9 @@ router.get('/subscriptions/plans', async (req, res) => {
       .from('subscription_plans')
       // Select all to avoid 42703 errors on differing schemas
       .select('*')
-      // Order by a safe column that exists across schemas
-      .order('id', { ascending: true });
+      // Order by sort_order first, then by base_price
+      .order('sort_order', { ascending: true, nullsFirst: false })
+      .order('base_price', { ascending: true });
     
     if (is_active !== undefined) {
       query = query.eq('is_active', is_active === 'true');
@@ -48,35 +49,53 @@ router.get('/subscriptions/plans', async (req, res) => {
     }
     
     // Transform data to match frontend expectations
-    const transformedPlans = (data || []).map(plan => ({
-      id: plan.id,
-      name: plan.name || plan.plan_name,
-      plan_name: plan.plan_name || plan.name,
-      description: plan.description,
-      unit_type: plan.unit_type || 'zipcode',
-      unitType: plan.unit_type || 'zipcode',
-      price_per_unit: plan.price_per_unit,
-      base_units: plan.base_units ?? plan.min_units ?? 10,
-      min_units: plan.min_units ?? plan.base_units ?? 10,
-      max_units: plan.max_units ?? null,
-      additional_unit_price: plan.additional_unit_price ?? null,
-      base_price: plan.base_price ?? (plan.price_per_unit && (plan.min_units || plan.base_units) ? Number(plan.price_per_unit) * Number(plan.min_units || plan.base_units) : null),
-      basePrice: Number((plan.base_price ?? plan.price_per_unit) || 0),
-      billing_cycle: plan.billing_cycle,
-      trial_days: plan.trial_days ?? plan.trial_period_days ?? 0,
-      features: plan.features || {},
-      is_active: plan.is_active !== undefined ? plan.is_active : true,
-      isActive: plan.is_active !== undefined ? plan.is_active : true,
-      sort_order: plan.sort_order,
-      metadata: plan.metadata || {},
-      created_at: plan.created_at,
-      updated_at: plan.updated_at,
-      // Derived fields for frontend
-      baseZipcodes: plan.base_units ?? plan.min_units ?? null,
-      additionalPrice: plan.additional_unit_price ?? null,
-      maxZipcodes: plan.max_units ?? null,
-      customPricing: plan.custom_pricing ?? plan.metadata?.customPricing ?? ''
-    }));
+    const transformedPlans = (data || []).map(plan => {
+      // Calculate monthly price (base_price is the main monthly price field)
+      const monthlyPrice = Number(plan.base_price ?? plan.price_per_unit ?? 0);
+      
+      return {
+        id: plan.id,
+        name: plan.name || plan.plan_name,
+        plan_name: plan.plan_name || plan.name,
+        description: plan.description || 'Standard subscription plan',
+        unit_type: plan.unit_type || 'zipcode',
+        unitType: plan.unit_type || 'zipcode',
+        price_per_unit: plan.price_per_unit ?? null,
+        base_units: plan.base_units ?? plan.min_units ?? 10,
+        min_units: plan.min_units ?? plan.base_units ?? 10,
+        max_units: plan.max_units ?? null,
+        additional_unit_price: plan.additional_unit_price ?? null,
+        // Monthly price fields - most important for frontend
+        base_price: monthlyPrice,
+        basePrice: monthlyPrice,
+        price: monthlyPrice,
+        monthlyPrice: monthlyPrice,
+        billing_cycle: plan.billing_cycle || 'monthly',
+        trial_days: plan.trial_days ?? plan.trial_period_days ?? 0,
+        trial_period_days: plan.trial_period_days ?? plan.trial_days ?? 0,
+        features: plan.features || {},
+        is_active: plan.is_active !== undefined ? plan.is_active : true,
+        isActive: plan.is_active !== undefined ? plan.is_active : true,
+        status: plan.is_active !== undefined && plan.is_active ? 'ACTIVE' : 'INACTIVE',
+        sort_order: plan.sort_order ?? 0,
+        metadata: plan.metadata || {},
+        created_at: plan.created_at,
+        updated_at: plan.updated_at,
+        // Derived fields for frontend
+        baseZipcodes: plan.base_units ?? plan.min_units ?? null,
+        additionalPrice: plan.additional_unit_price ?? null,
+        maxZipcodes: plan.max_units ?? null,
+        customPricing: plan.custom_pricing ?? plan.metadata?.customPricing ?? ''
+      };
+    });
+    
+    // Sort plans by sort_order, then by price (in case sort_order is missing)
+    transformedPlans.sort((a, b) => {
+      const orderA = a.sort_order || 999;
+      const orderB = b.sort_order || 999;
+      if (orderA !== orderB) return orderA - orderB;
+      return (a.base_price || a.price || 0) - (b.base_price || b.price || 0);
+    });
     
     res.json({
       success: true,
@@ -293,6 +312,9 @@ router.put('/subscriptions/plans/:id', async (req, res) => {
     if (payload.features !== undefined) {
       // Accept array/object/string; store as-is
       updates.features = payload.features;
+    }
+    if (payload.sort_order !== undefined || payload.sortOrder !== undefined) {
+      updates.sort_order = payload.sort_order ?? payload.sortOrder;
     }
     
     // Try update with progressive fallback removing columns reported missing by PostgREST schema cache
