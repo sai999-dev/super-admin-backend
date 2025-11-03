@@ -464,53 +464,80 @@ router.delete('/subscriptions/plans/:id', async (req, res) => {
       return res.status(404).json({ success: false, message: 'Subscription plan not found' });
     }
 
-    // Check for active/trialing subscriptions referencing this plan
-    const { count: activeCount, error: subErr } = await supabase
+    // Check for subscriptions referencing this plan (any status)
+    const { data: allSubscriptions, error: subErr } = await supabase
       .from('subscriptions')
-      .select('id', { count: 'exact', head: true })
-      .eq('plan_id', id)
-      .in('status', ['trial', 'trialing', 'active', 'TRIAL', 'ACTIVE']);
+      .select('id, status')
+      .eq('plan_id', id);
 
     if (subErr) throw subErr;
 
-    if (!force && (activeCount || 0) > 0) {
+    const activeSubscriptions = (allSubscriptions || []).filter(s => 
+      ['trial', 'trialing', 'active', 'TRIAL', 'ACTIVE'].includes(s.status)
+    );
+    const activeCount = activeSubscriptions.length;
+    const totalCount = (allSubscriptions || []).length;
+
+    if (!force && activeCount > 0) {
       return res.status(400).json({
         success: false,
-        message: `Cannot delete this plan. ${activeCount} active subscription(s) are using it. Please cancel or migrate them first.`
+        message: `Cannot delete this plan. ${activeCount} active subscription(s) are using it. Please cancel or migrate them first. Use ?force=true to force delete.`
       });
     }
 
-    // If force=true, cancel/remove referencing subscriptions first
-    let affected = { cancelledSubscriptions: 0, removedAgencySubs: 0 };
-    if (force && (activeCount || 0) > 0) {
-      // Cancel in subscriptions table
-      const { data: subsToCancel } = await supabase
-        .from('subscriptions')
-        .select('id')
-        .eq('plan_id', id)
-        .in('status', ['trial', 'trialing', 'active', 'TRIAL', 'ACTIVE']);
-      if (Array.isArray(subsToCancel) && subsToCancel.length) {
-        const ids = subsToCancel.map(s => s.id);
-        const { error: cancelErr } = await supabase
+    // If force=true, delete ALL subscriptions referencing this plan (not just active)
+    let affected = { deletedSubscriptions: 0, removedAgencySubs: 0 };
+    if (force && totalCount > 0) {
+      // Delete ALL subscriptions (any status) that reference this plan
+      const subscriptionIds = (allSubscriptions || []).map(s => s.id);
+      if (subscriptionIds.length > 0) {
+        const { error: delSubsErr } = await supabase
           .from('subscriptions')
-          .update({ status: 'cancelled', updated_at: new Date().toISOString() })
-          .in('id', ids);
-        if (cancelErr) console.warn('Force-cancel error:', cancelErr.message);
-        affected.cancelledSubscriptions = ids.length;
+          .delete()
+          .in('id', subscriptionIds);
+        if (delSubsErr) {
+          console.error('Error deleting subscriptions:', delSubsErr.message);
+          // If deletion fails due to FK constraints, try cancelling first then deleting
+          const { error: cancelErr } = await supabase
+            .from('subscriptions')
+            .update({ 
+              status: 'cancelled', 
+              cancelled_at: new Date().toISOString(),
+              updated_at: new Date().toISOString() 
+            })
+            .in('id', subscriptionIds);
+          if (cancelErr) {
+            throw new Error(`Failed to delete subscriptions: ${delSubsErr.message}`);
+          }
+          // Retry deletion after cancelling
+          const { error: retryErr } = await supabase
+            .from('subscriptions')
+            .delete()
+            .in('id', subscriptionIds);
+          if (retryErr) {
+            throw new Error(`Failed to delete cancelled subscriptions: ${retryErr.message}`);
+          }
+        }
+        affected.deletedSubscriptions = subscriptionIds.length;
       }
+      
       // Remove agency_subscriptions rows referencing the plan
       const { data: agencySubs } = await supabase
         .from('agency_subscriptions')
         .select('id')
         .eq('plan_id', id);
-      if (Array.isArray(agencySubs) && agencySubs.length) {
-        const ids = agencySubs.map(s => s.id);
+      if (Array.isArray(agencySubs) && agencySubs.length > 0) {
+        const agencySubIds = agencySubs.map(s => s.id);
         const { error: delASErr } = await supabase
           .from('agency_subscriptions')
           .delete()
-          .in('id', ids);
-        if (delASErr) console.warn('Force-delete agency_subscriptions error:', delASErr.message);
-        affected.removedAgencySubs = ids.length;
+          .in('id', agencySubIds);
+        if (delASErr) {
+          console.warn('Force-delete agency_subscriptions error:', delASErr.message);
+          // Continue even if this fails - main subscriptions are deleted
+        } else {
+          affected.removedAgencySubs = agencySubIds.length;
+        }
       }
     }
 
@@ -523,21 +550,91 @@ router.delete('/subscriptions/plans/:id', async (req, res) => {
       .select()
       .single());
 
-    if (delErr && /foreign key|violates foreign key|constraint/i.test(delErr.message || '')) {
-      // Clean up dependents best-effort and retry
-      try {
-        await supabase.from('subscriptions').delete().eq('plan_id', id);
-      } catch (e) { /* ignore */ }
-      try {
-        await supabase.from('agency_subscriptions').delete().eq('plan_id', id);
-      } catch (e) { /* ignore */ }
-      // Retry delete
-      ({ data: deleted, error: delErr } = await supabase
-        .from('subscription_plans')
-        .delete()
-        .eq('id', id)
-        .select()
-        .single());
+    if (delErr) {
+      const errorMsg = (delErr.message || '').toLowerCase();
+      
+      // If foreign key constraint error, we need to clean up dependencies
+      if (/foreign key|violates foreign key|constraint/i.test(errorMsg)) {
+        // Check if there are still subscriptions referencing this plan
+        const { data: remainingSubs } = await supabase
+          .from('subscriptions')
+          .select('id')
+          .eq('plan_id', id)
+          .limit(1);
+        
+        if (remainingSubs && remainingSubs.length > 0) {
+          // If force was not used, return error asking to use force
+          if (!force) {
+            return res.status(400).json({
+              success: false,
+              message: 'Cannot delete plan. There are subscriptions still referencing it. Use ?force=true to delete all related subscriptions.',
+              error: delErr.message
+            });
+          }
+          
+          // Force delete all remaining subscriptions
+          const { data: allRemaining } = await supabase
+            .from('subscriptions')
+            .select('id')
+            .eq('plan_id', id);
+          
+          if (allRemaining && allRemaining.length > 0) {
+            const remainingIds = allRemaining.map(s => s.id);
+            // First cancel them
+            await supabase
+              .from('subscriptions')
+              .update({ 
+                status: 'cancelled',
+                cancelled_at: new Date().toISOString(),
+                updated_at: new Date().toISOString()
+              })
+              .in('id', remainingIds);
+            
+            // Then delete them
+            const { error: deleteRemainingErr } = await supabase
+              .from('subscriptions')
+              .delete()
+              .in('id', remainingIds);
+            
+            if (deleteRemainingErr) {
+              return res.status(500).json({
+                success: false,
+                message: 'Failed to delete related subscriptions',
+                error: deleteRemainingErr.message
+              });
+            }
+            
+            affected.deletedSubscriptions += remainingIds.length;
+          }
+        }
+        
+        // Clean up agency_subscriptions
+        try {
+          const { data: remainingAgencySubs } = await supabase
+            .from('agency_subscriptions')
+            .select('id')
+            .eq('plan_id', id);
+          
+          if (remainingAgencySubs && remainingAgencySubs.length > 0) {
+            const agencySubIds = remainingAgencySubs.map(s => s.id);
+            await supabase
+              .from('agency_subscriptions')
+              .delete()
+              .in('id', agencySubIds);
+            affected.removedAgencySubs += agencySubIds.length;
+          }
+        } catch (e) {
+          console.warn('Error cleaning up agency_subscriptions:', e.message);
+        }
+        
+        // Retry deleting the plan
+        ({ data: deleted, error: delErr } = await supabase
+          .from('subscription_plans')
+          .delete()
+          .eq('id', id)
+          .select()
+          .single());
+      }
     }
 
     if (delErr) throw delErr;
@@ -550,8 +647,13 @@ router.delete('/subscriptions/plans/:id', async (req, res) => {
           id: deleted.id,
           name: deleted.name || deleted.plan_name,
           deletedAt: new Date().toISOString()
-        }
-      , affected
+        },
+        ...(force && (affected.deletedSubscriptions > 0 || affected.removedAgencySubs > 0) ? {
+          affected: {
+            deletedSubscriptions: affected.deletedSubscriptions,
+            removedAgencySubscriptions: affected.removedAgencySubs
+          }
+        } : {})
       }
     });
   } catch (error) {
