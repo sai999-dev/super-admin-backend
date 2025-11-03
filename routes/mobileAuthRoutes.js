@@ -524,6 +524,100 @@ router.post('/logout', (req, res) => {
 });
 
 /**
+ * POST /api/v1/agencies/verify-email
+ * Verify agency email with verification code
+ * 
+ * Body:
+ * {
+ *   email: string,
+ *   verification_code: string
+ * }
+ */
+router.post('/verify-email', async (req, res) => {
+  try {
+    const { email, verification_code } = req.body;
+
+    if (!email || !verification_code) {
+      return res.status(400).json({
+        success: false,
+        message: 'Email and verification code are required'
+      });
+    }
+
+    // Find agency by email
+    const { data: agencyRow, error: agencyError } = await supabase
+      .from('agencies')
+      .select('*')
+      .eq('email', email)
+      .single();
+
+    if (agencyError || !agencyRow) {
+      return res.status(404).json({
+        success: false,
+        message: 'Agency not found'
+      });
+    }
+
+    // Check verification code (if stored in database)
+    // Note: This assumes verification_code is stored in agencies table
+    // If using separate table, query that instead
+    if (agencyRow.verification_code !== verification_code) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid verification code'
+      });
+    }
+
+    // Check if code is expired
+    if (agencyRow.verification_expires_at) {
+      const expiresAt = new Date(agencyRow.verification_expires_at);
+      if (expiresAt < new Date()) {
+        return res.status(410).json({
+          success: false,
+          message: 'Verification code has expired'
+        });
+      }
+    }
+
+    // Update agency as verified
+    const normalizedAgency = normalizeAgencyRow(agencyRow);
+    const { error: updateError } = await supabase
+      .from('agencies')
+      .update({
+        is_verified: true,
+        verification_code: null,
+        verification_expires_at: null,
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', normalizedAgency.id);
+
+    if (updateError) throw updateError;
+
+    // Generate JWT token
+    const token = generateToken(normalizedAgency.id, normalizedAgency.email, normalizedAgency.business_name);
+
+    res.json({
+      success: true,
+      token,
+      message: 'Email verified successfully',
+      data: {
+        agency_id: normalizedAgency.id,
+        email: normalizedAgency.email,
+        agency_name: normalizedAgency.business_name,
+        is_verified: true
+      }
+    });
+  } catch (error) {
+    console.error('Email verification error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to verify email',
+      error: error.message
+    });
+  }
+});
+
+/**
  * POST /api/v1/agencies/forgot-password
  * Request password reset for agency email
  * 
@@ -572,23 +666,41 @@ router.post('/forgot-password', async (req, res) => {
       });
     }
 
-    // In a production environment, you would:
-    // 1. Generate a secure reset token
-    // 2. Store it in the database with expiration
-    // 3. Send an email with reset link
-    // For now, we'll just return success (you can implement email sending later)
+    // Check rate limiting (max 3 requests per hour)
+    const oneHourAgo = new Date(Date.now() - 3600000).toISOString();
+    const { count: recentRequests } = await supabase
+      .from('password_reset_tokens')
+      .select('*', { count: 'exact', head: true })
+      .eq('agency_id', agencyRow.id)
+      .gte('created_at', oneHourAgo);
 
-    console.log('Password reset requested for:', normalizedEmail, 'Agency ID:', agencyRow.id);
+    if (recentRequests >= 3) {
+      return res.status(429).json({
+        success: false,
+        message: 'Too many reset attempts. Please try again later.'
+      });
+    }
 
-    // TODO: Implement email sending with reset link
-    // const resetToken = crypto.randomBytes(32).toString('hex');
-    // await supabase.from('password_resets').insert({
-    //   email: normalizedEmail,
-    //   token: resetToken,
-    //   expires_at: new Date(Date.now() + 3600000) // 1 hour
-    // });
-    // await sendPasswordResetEmail(normalizedEmail, resetToken);
+    // Generate secure reset token
+    const crypto = require('crypto');
+    const resetToken = crypto.randomBytes(32).toString('hex');
+    const expiresAt = new Date(Date.now() + 3600000); // 1 hour
 
+    // Store reset token
+    await supabase.from('password_reset_tokens').insert({
+      agency_id: agencyRow.id,
+      token: resetToken,
+      expires_at: expiresAt.toISOString(),
+      created_at: new Date().toISOString()
+    });
+
+    // TODO: Send email with reset link
+    // const resetLink = `${process.env.FRONTEND_URL}/reset-password?token=${resetToken}`;
+    // await sendPasswordResetEmail(normalizedEmail, resetLink, agencyRow.agency_name || agencyRow.business_name);
+
+    console.log('Password reset token generated for:', normalizedEmail, 'Token:', resetToken);
+
+    // Always return success (security best practice)
     res.json({
       success: true,
       message: 'If an account with this email exists, password reset instructions have been sent.'

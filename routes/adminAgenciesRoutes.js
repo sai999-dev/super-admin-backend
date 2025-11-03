@@ -1,6 +1,10 @@
 const express = require('express');
 const router = express.Router();
 const supabase = require('../config/supabaseClient');
+const { authenticateAdmin } = require('../middleware/adminAuth');
+
+// Apply admin authentication to all routes
+router.use(authenticateAdmin);
 
 const SORT_FIELD_MAP = {
   created_at: 'created_at',
@@ -631,6 +635,84 @@ router.put('/agencies/:agencyId', async (req, res) => {
   }
 });
 
+// PATCH endpoint for frontend compatibility
+router.patch('/agencies/:agencyId/status', async (req, res) => {
+  try {
+    const { agencyId } = req.params;
+    const { status } = req.body; // Frontend sends { status: "active" | "suspended" | "pending" }
+    
+    // Map status to is_active
+    const is_active = status === 'active';
+    const reason = req.body.reason;
+
+    if (status === undefined) {
+      return res.status(400).json({
+        success: false,
+        message: 'status field is required'
+      });
+    }
+
+    const active = is_active;
+
+    const updateResp = await applyAgencyIdFilter(
+      supabase
+        .from('agencies')
+        .update({
+          status: status.toUpperCase(),
+          is_active: active,
+          updated_at: new Date().toISOString()
+        })
+        .select('*'),
+      agencyId
+    ).single();
+
+    if (updateResp.error) throw updateResp.error;
+    if (!updateResp.data) {
+      return res.status(404).json({
+        success: false,
+        message: 'Agency not found'
+      });
+    }
+
+    const agencyKey = resolveAgencyId(updateResp.data);
+
+    await supabase
+      .from('users')
+      .update({ is_active: active })
+      .eq('agency_id', agencyKey);
+
+    await supabase
+      .from('audit_logs')
+      .insert([
+        {
+          actor_id: req.user?.id || 'system',
+          actor_email: req.user?.email || 'system',
+          action: active ? 'ACTIVATE_AGENCY' : 'SUSPEND_AGENCY',
+          resource_type: 'AGENCY',
+          resource_id: agencyKey,
+          metadata: { reason: reason || 'No reason provided' },
+          created_at: new Date().toISOString()
+        }
+      ]);
+
+    res.json({
+      success: true,
+      message: `Agency status updated to ${status}`,
+      data: {
+        agency: mapAgencyRecord(updateResp.data)
+      }
+    });
+  } catch (error) {
+    console.error('Error updating agency status:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to update agency status',
+      error: error.message
+    });
+  }
+});
+
+// Keep PUT endpoint for backward compatibility
 router.put('/agencies/:agencyId/status', async (req, res) => {
   try {
     const { agencyId } = req.params;

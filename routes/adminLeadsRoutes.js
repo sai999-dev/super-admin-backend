@@ -6,8 +6,12 @@
 const express = require('express');
 const { body, param, query, validationResult } = require('express-validator');
 const adminLeadsController = require('../controllers/adminLeadsController');
+const { authenticateAdmin } = require('../middleware/adminAuth');
 
 const router = express.Router();
+
+// Apply admin authentication to all routes
+router.use(authenticateAdmin);
 
 // Validation middleware
 const validateRequest = (req, res, next) => {
@@ -22,19 +26,7 @@ const validateRequest = (req, res, next) => {
   next();
 };
 
-// Authentication middleware (placeholder - implement based on your auth system)
-const authenticateAdmin = (req, res, next) => {
-  // TODO: Implement proper authentication
-  // For now, we'll just add a mock user
-  req.user = {
-    id: 'admin-user-123',
-    role: 'super_admin',
-    email: 'admin@leadmarketplace.com'
-  };
-  next();
-};
-
-// Authorization middleware
+// Authorization middleware (additional check - authenticateAdmin already verified admin role)
 const authorizeAdmin = (req, res, next) => {
   if (!req.user || !['super_admin', 'admin'].includes(req.user.role)) {
     return res.status(403).json({

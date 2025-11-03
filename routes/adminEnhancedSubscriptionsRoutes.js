@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const supabase = require('../config/supabaseClient');
+const { authenticateAdmin } = require('../middleware/adminAuth');
 
 /**
  * ENHANCED SUBSCRIPTION MANAGEMENT ROUTES
@@ -8,6 +9,9 @@ const supabase = require('../config/supabaseClient');
  * Pricing Model: 10 zipcodes/3 cities for $99/month base
  *                Additional units: $69 for every 10 zipcodes/3 cities
  */
+
+// Apply admin authentication to all routes
+router.use(authenticateAdmin);
 
 // ============ SUBSCRIPTION PLANS ============
 
@@ -90,6 +94,73 @@ router.get('/subscriptions/plans', async (req, res) => {
     console.error('Error fetching subscription plans:', error);
     // Return empty list rather than failing the UI
     res.status(200).json({ success: true, data: { plans: [], pagination: { page: 1, limit: 50, total: 0, totalPages: 0 } } });
+  }
+});
+
+// GET /api/admin/subscriptions/plans/:id - Get single subscription plan
+router.get('/subscriptions/plans/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const { data: plan, error } = await supabase
+      .from('subscription_plans')
+      .select('*')
+      .eq('id', id)
+      .single();
+
+    if (error) throw error;
+    
+    if (!plan) {
+      return res.status(404).json({
+        success: false,
+        message: 'Subscription plan not found'
+      });
+    }
+
+    // Transform data to match frontend expectations
+    const transformedPlan = {
+      id: plan.id,
+      name: plan.name || plan.plan_name,
+      plan_name: plan.plan_name || plan.name,
+      description: plan.description,
+      unit_type: plan.unit_type || 'zipcode',
+      unitType: plan.unit_type || 'zipcode',
+      price_per_unit: plan.price_per_unit,
+      base_units: plan.base_units ?? plan.min_units ?? 10,
+      min_units: plan.min_units ?? plan.base_units ?? 10,
+      max_units: plan.max_units ?? null,
+      additional_unit_price: plan.additional_unit_price ?? null,
+      base_price: plan.base_price ?? (plan.price_per_unit && (plan.min_units || plan.base_units) ? Number(plan.price_per_unit) * Number(plan.min_units || plan.base_units) : null),
+      basePrice: Number((plan.base_price ?? plan.price_per_unit) || 0),
+      billing_cycle: plan.billing_cycle,
+      trial_days: plan.trial_days ?? plan.trial_period_days ?? 0,
+      trial_period_days: plan.trial_period_days ?? plan.trial_days ?? 0,
+      features: plan.features || {},
+      is_active: plan.is_active !== undefined ? plan.is_active : true,
+      isActive: plan.is_active !== undefined ? plan.is_active : true,
+      sort_order: plan.sort_order,
+      metadata: plan.metadata || {},
+      created_at: plan.created_at,
+      updated_at: plan.updated_at,
+      baseZipcodes: plan.base_units ?? plan.min_units ?? null,
+      additionalPrice: plan.additional_unit_price ?? null,
+      maxZipcodes: plan.max_units ?? null,
+      customPricing: plan.custom_pricing ?? plan.metadata?.customPricing ?? ''
+    };
+
+    res.json({
+      success: true,
+      data: {
+        plan: transformedPlan
+      }
+    });
+  } catch (error) {
+    console.error('Error fetching subscription plan:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch subscription plan',
+      error: error.message
+    });
   }
 });
 

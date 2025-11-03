@@ -418,3 +418,476 @@ exports.getUpcomingBilling = async (req, res) => {
     });
   }
 };
+
+/**
+ * POST /api/mobile/subscription/subscribe
+ * Subscribe to a plan
+ */
+exports.subscribe = async (req, res) => {
+  try {
+    const agencyId = req.agency.id;
+    const { plan_id, payment_method_id } = req.body;
+
+    if (!plan_id) {
+      return res.status(400).json({
+        success: false,
+        message: 'Plan ID is required'
+      });
+    }
+
+    // Check if already has active subscription
+    const existing = await fetchSubscriptionRecord(agencyId, ACTIVE_SUBSCRIPTION_STATUSES);
+    if (existing) {
+      return res.status(409).json({
+        success: false,
+        message: 'Agency already has an active subscription'
+      });
+    }
+
+    // Get plan
+    const plan = await fetchPlanById(plan_id);
+    if (!plan || !plan.is_active) {
+      return res.status(404).json({
+        success: false,
+        message: 'Plan not found or inactive'
+      });
+    }
+
+    // Create subscription
+    const now = new Date();
+    const nextBilling = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
+
+    const { data: subscription, error } = await supabase
+      .from('subscriptions')
+      .insert({
+        agency_id: agencyId,
+        plan_id,
+        status: 'active',
+        start_date: now.toISOString(),
+        next_billing_date: nextBilling.toISOString(),
+        auto_renew: true,
+        metadata: { payment_method_id }
+      })
+      .select()
+      .single();
+
+    if (error) throw error;
+
+    // Create transaction record
+    await supabase.from('transactions').insert({
+      agency_id: agencyId,
+      subscription_id: subscription.id,
+      amount: plan.base_price || plan.price_per_unit || 0,
+      status: 'completed',
+      transaction_date: now.toISOString()
+    });
+
+    res.status(201).json({
+      success: true,
+      subscription: {
+        id: subscription.id,
+        plan_id: subscription.plan_id,
+        status: subscription.status,
+        start_date: subscription.start_date,
+        next_billing_date: subscription.next_billing_date
+      }
+    });
+  } catch (error) {
+    console.error('Error subscribing:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to subscribe',
+      error: error.message
+    });
+  }
+};
+
+/**
+ * PUT /api/mobile/subscription/upgrade
+ * Upgrade to higher tier plan
+ */
+exports.upgrade = async (req, res) => {
+  try {
+    const agencyId = req.agency.id;
+    const { plan_id, prorated = true } = req.body;
+
+    if (!plan_id) {
+      return res.status(400).json({
+        success: false,
+        message: 'Plan ID is required'
+      });
+    }
+
+    const subscription = await fetchSubscriptionRecord(agencyId, ACTIVE_SUBSCRIPTION_STATUSES);
+    if (!subscription) {
+      return res.status(404).json({
+        success: false,
+        message: 'No active subscription found'
+      });
+    }
+
+    const currentPlan = await fetchPlanById(subscription.plan_id);
+    const newPlan = await fetchPlanById(plan_id);
+
+    if (!newPlan || !newPlan.is_active) {
+      return res.status(404).json({
+        success: false,
+        message: 'New plan not found or inactive'
+      });
+    }
+
+    // Validate it's a higher tier (check price)
+    const currentPrice = currentPlan?.base_price || currentPlan?.price_per_unit || 0;
+    const newPrice = newPlan.base_price || newPlan.price_per_unit || 0;
+
+    if (newPrice <= currentPrice) {
+      return res.status(400).json({
+        success: false,
+        message: 'New plan must be a higher tier than current plan'
+      });
+    }
+
+    // Calculate prorated amount if requested
+    let proratedAmount = 0;
+    if (prorated) {
+      const daysRemaining = diffInDays(subscription.next_billing_date);
+      const dailyRate = (newPrice - currentPrice) / 30;
+      proratedAmount = safeRound(dailyRate * (daysRemaining || 0));
+    }
+
+    // Update subscription
+    const { data: updated, error } = await supabase
+      .from('subscriptions')
+      .update({
+        plan_id,
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', subscription.id)
+      .select()
+      .single();
+
+    if (error) throw error;
+
+    // Create transaction for prorated difference
+    if (proratedAmount > 0) {
+      await supabase.from('transactions').insert({
+        agency_id: agencyId,
+        subscription_id: updated.id,
+        amount: proratedAmount,
+        status: 'completed',
+        transaction_date: new Date().toISOString()
+      });
+    }
+
+    res.json({
+      success: true,
+      subscription: updated
+    });
+  } catch (error) {
+    console.error('Error upgrading subscription:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to upgrade subscription',
+      error: error.message
+    });
+  }
+};
+
+/**
+ * PUT /api/mobile/subscription/downgrade
+ * Downgrade to lower tier plan
+ */
+exports.downgrade = async (req, res) => {
+  try {
+    const agencyId = req.agency.id;
+    const { plan_id, immediate = false } = req.body;
+
+    if (!plan_id) {
+      return res.status(400).json({
+        success: false,
+        message: 'Plan ID is required'
+      });
+    }
+
+    const subscription = await fetchSubscriptionRecord(agencyId, ACTIVE_SUBSCRIPTION_STATUSES);
+    if (!subscription) {
+      return res.status(404).json({
+        success: false,
+        message: 'No active subscription found'
+      });
+    }
+
+    const currentPlan = await fetchPlanById(subscription.plan_id);
+    const newPlan = await fetchPlanById(plan_id);
+
+    if (!newPlan || !newPlan.is_active) {
+      return res.status(404).json({
+        success: false,
+        message: 'New plan not found or inactive'
+      });
+    }
+
+    // Validate it's a lower tier
+    const currentPrice = currentPlan?.base_price || currentPlan?.price_per_unit || 0;
+    const newPrice = newPlan.base_price || newPlan.price_per_unit || 0;
+
+    if (newPrice >= currentPrice) {
+      return res.status(400).json({
+        success: false,
+        message: 'New plan must be a lower tier than current plan'
+      });
+    }
+
+    if (immediate) {
+      // Downgrade immediately with prorated refund
+      const daysRemaining = diffInDays(subscription.next_billing_date);
+      const dailyRate = (currentPrice - newPrice) / 30;
+      const refundAmount = safeRound(dailyRate * (daysRemaining || 0));
+
+      const { data: updated, error } = await supabase
+        .from('subscriptions')
+        .update({
+          plan_id,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', subscription.id)
+        .select()
+        .single();
+
+      if (error) throw error;
+
+      // Create refund transaction
+      if (refundAmount > 0) {
+        await supabase.from('transactions').insert({
+          agency_id: agencyId,
+          subscription_id: updated.id,
+          amount: -refundAmount,
+          status: 'refunded',
+          transaction_date: new Date().toISOString()
+        });
+      }
+
+      return res.json({
+        success: true,
+        subscription: updated,
+        refund_amount: refundAmount
+      });
+    } else {
+      // Schedule downgrade at end of billing period
+      const { data: updated, error } = await supabase
+        .from('subscriptions')
+        .update({
+          plan_id,
+          metadata: {
+            ...(subscription.metadata || {}),
+            downgrade_scheduled: true,
+            scheduled_plan_id: plan_id
+          },
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', subscription.id)
+        .select()
+        .single();
+
+      if (error) throw error;
+
+      return res.json({
+        success: true,
+        message: 'Downgrade scheduled for end of billing period',
+        subscription: updated
+      });
+    }
+  } catch (error) {
+    console.error('Error downgrading subscription:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to downgrade subscription',
+      error: error.message
+    });
+  }
+};
+
+/**
+ * POST /api/mobile/subscription/cancel
+ * Cancel subscription
+ */
+exports.cancel = async (req, res) => {
+  try {
+    const agencyId = req.agency.id;
+    const { reason, immediate = false } = req.body;
+
+    const subscription = await fetchSubscriptionRecord(agencyId, ACTIVE_SUBSCRIPTION_STATUSES);
+    if (!subscription) {
+      return res.status(404).json({
+        success: false,
+        message: 'No active subscription found'
+      });
+    }
+
+    if (immediate) {
+      // Cancel immediately
+      const { data: updated, error } = await supabase
+        .from('subscriptions')
+        .update({
+          status: 'cancelled',
+          cancelled_at: new Date().toISOString(),
+          cancellation_reason: reason || null,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', subscription.id)
+        .select()
+        .single();
+
+      if (error) throw error;
+
+      return res.json({
+        success: true,
+        message: 'Subscription cancelled immediately',
+        subscription: updated
+      });
+    } else {
+      // Cancel at end of billing period
+      const { data: updated, error } = await supabase
+        .from('subscriptions')
+        .update({
+          status: 'cancelled',
+          cancellation_reason: reason || null,
+          metadata: {
+            ...(subscription.metadata || {}),
+            cancel_at_period_end: true
+          },
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', subscription.id)
+        .select()
+        .single();
+
+      if (error) throw error;
+
+      // TODO: Send cancellation confirmation email
+
+      return res.json({
+        success: true,
+        message: 'Subscription will be cancelled at end of billing period',
+        subscription: updated
+      });
+    }
+  } catch (error) {
+    console.error('Error cancelling subscription:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to cancel subscription',
+      error: error.message
+    });
+  }
+};
+
+/**
+ * GET /api/mobile/subscription/invoices
+ * Get billing history/invoices
+ */
+exports.getInvoices = async (req, res) => {
+  try {
+    const agencyId = req.agency.id;
+    const page = parseIntOr(req.query.page, 1);
+    const limit = parseIntOr(req.query.limit, 20);
+    const offset = (page - 1) * limit;
+
+    const { data: transactions, error, count } = await supabase
+      .from('transactions')
+      .select('*, subscriptions(plan_id)', { count: 'exact' })
+      .eq('agency_id', agencyId)
+      .order('transaction_date', { ascending: false })
+      .range(offset, offset + limit - 1);
+
+    if (error) throw error;
+
+    // Get plan details
+    const planIds = Array.from(new Set(
+      transactions.map(t => t.subscriptions?.plan_id).filter(Boolean)
+    ));
+    const planLookup = await buildPlanLookup(planIds);
+
+    const invoices = (transactions || []).map(t => ({
+      id: t.id,
+      amount: safeRound(t.amount),
+      status: t.status,
+      transaction_date: t.transaction_date,
+      invoice_number: t.invoice_number || `INV-${t.id}`,
+      plan_id: t.subscriptions?.plan_id,
+      plan_name: planLookup.get(t.subscriptions?.plan_id)?.plan_name || 'Unknown'
+    }));
+
+    res.json({
+      success: true,
+      invoices,
+      pagination: {
+        page,
+        limit,
+        total: count || 0,
+        totalPages: Math.ceil((count || 0) / limit)
+      }
+    });
+  } catch (error) {
+    console.error('Error fetching invoices:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch invoices',
+      error: error.message
+    });
+  }
+};
+
+/**
+ * PUT /api/mobile/payment-method
+ * Update payment method
+ */
+exports.updatePaymentMethod = async (req, res) => {
+  try {
+    const agencyId = req.agency.id;
+    const { payment_method_id } = req.body;
+
+    if (!payment_method_id) {
+      return res.status(400).json({
+        success: false,
+        message: 'Payment method ID is required'
+      });
+    }
+
+    const subscription = await fetchSubscriptionRecord(agencyId, ACTIVE_SUBSCRIPTION_STATUSES);
+    if (!subscription) {
+      return res.status(404).json({
+        success: false,
+        message: 'No active subscription found'
+      });
+    }
+
+    const { data: updated, error } = await supabase
+      .from('subscriptions')
+      .update({
+        metadata: {
+          ...(subscription.metadata || {}),
+          payment_method_id
+        },
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', subscription.id)
+      .select()
+      .single();
+
+    if (error) throw error;
+
+    res.json({
+      success: true,
+      message: 'Payment method updated successfully',
+      subscription: updated
+    });
+  } catch (error) {
+    console.error('Error updating payment method:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to update payment method',
+      error: error.message
+    });
+  }
+};

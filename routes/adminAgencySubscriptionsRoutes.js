@@ -1,6 +1,10 @@
 const express = require('express');
 const router = express.Router();
 const supabase = require('../config/supabaseClient');
+const { authenticateAdmin } = require('../middleware/adminAuth');
+
+// Apply admin authentication to all routes
+router.use(authenticateAdmin);
 
 const SORT_FIELD_MAP = {
   created_at: 'created_at',

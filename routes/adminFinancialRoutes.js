@@ -1,12 +1,16 @@
 const express = require('express');
 const router = express.Router();
 const supabase = require('../config/supabaseClient');
+const { authenticateAdmin } = require('../middleware/adminAuth');
 
 /**
  * FINANCIAL MANAGEMENT ROUTES - SUPER ADMIN PORTAL
  * Connects to: frontend/scripts/app.js - Financial Operations section
  * Database: billing_history, transactions, subscriptions tables
  */
+
+// Apply admin authentication to all routes
+router.use(authenticateAdmin);
 
 // GET /api/admin/financial/invoices - List all invoices with pagination
 router.get('/financial/invoices', async (req, res) => {

@@ -1660,6 +1660,9 @@ const adminSystemRoutes = require('./routes/adminSystemRoutes');
 const adminRolesRoutes = require('./routes/adminRolesRoutes');
 const adminEnhancedSubscriptionsRoutes = require('./routes/adminEnhancedSubscriptionsRoutes');
 const adminLeadsRoutes = require('./routes/adminLeadsRoutes');
+const adminDocumentVerificationRoutes = require('./routes/adminDocumentVerificationRoutes');
+const adminPortalsRoutes = require('./routes/adminPortalsRoutes');
+const adminWebhooksRoutes = require('./routes/adminWebhooksRoutes');
 
 // Apply mobile auth routes (PUBLIC - no authentication required)
 app.use('/api/v1/agencies', mobileAuthRoutes);
@@ -1685,6 +1688,9 @@ app.use('/api/admin', adminFinancialRoutes);
 app.use('/api/admin', adminSystemRoutes);
 app.use('/api/admin', adminRolesRoutes);
 app.use('/api/admin', adminLeadsRoutes);
+app.use('/api/admin', adminDocumentVerificationRoutes);
+app.use('/api/admin', adminPortalsRoutes);
+app.use('/api/admin', adminWebhooksRoutes);
 app.use('/api/admin', adminRoutes);
 
 // Apply metrics/observability routes

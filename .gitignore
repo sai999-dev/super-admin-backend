@@ -1,3 +1,47 @@
-node_modules
-.env
+# Dependencies
+node_modules/
+package-lock.json
+
+# Environment variables
 config.env
+.env
+.env.local
+.env.*.local
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Build outputs
+dist/
+build/
+*.tar.gz
+
+# Temporary files
+tmp/
+temp/
+uploads/
+*.tmp
+
+# Test files (development only)
+test-results/
+coverage/
+.nyc_output/
+
+# Scripts (development/testing only - keep in repo but document)
+# scripts/test-*.js
+# scripts/seed*.js

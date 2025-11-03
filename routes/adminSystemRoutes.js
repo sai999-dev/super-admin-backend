@@ -1,11 +1,15 @@
 const express = require('express');
 const router = express.Router();
 const supabase = require('../config/supabaseClient');
+const { authenticateAdmin } = require('../middleware/adminAuth');
 
 /**
  * SYSTEM CONFIGURATION & AUDIT ROUTES - SUPER ADMIN PORTAL
  * System settings, industries, audit logs
  */
+
+// Apply admin authentication to all routes
+router.use(authenticateAdmin);
 
 // ============ AUDIT LOGS ============
 
