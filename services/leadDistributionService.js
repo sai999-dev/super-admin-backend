@@ -13,17 +13,26 @@ class LeadDistributionService {
   /**
    * Main distribution function - assigns lead to appropriate agency
    * @param {Object} lead - Lead object with territory, industry, etc.
+   * @param {Array} excludeAgencyIds - Optional array of agency IDs to exclude (for re-distribution)
    * @returns {Object} - Distribution result with agency assignment
    */
-  async distributeLead(lead) {
+  async distributeLead(lead, excludeAgencyIds = []) {
     try {
-      console.log(`📊 Starting distribution for lead ${lead.id}`);
+      console.log(`📊 Starting distribution for lead ${lead.id}${excludeAgencyIds.length > 0 ? ` (excluding ${excludeAgencyIds.length} agencies)` : ''}`);
 
       // Step 1: Find eligible agencies based on territory and industry
-      const eligibleAgencies = await this.findEligibleAgencies(
+      let eligibleAgencies = await this.findEligibleAgencies(
         lead.territory || lead.zipcode || lead.zip_code,
         lead.industry_type || lead.industry
       );
+
+      // Exclude agencies that already rejected this lead (for re-distribution)
+      if (excludeAgencyIds && excludeAgencyIds.length > 0) {
+        eligibleAgencies = eligibleAgencies.filter(agency => 
+          !excludeAgencyIds.includes(agency.id)
+        );
+        console.log(`🔍 Filtered out ${excludeAgencyIds.length} agencies, ${eligibleAgencies.length} remaining`);
+      }
 
       if (eligibleAgencies.length === 0) {
         console.log('⚠️ No eligible agencies found');
@@ -46,10 +55,11 @@ class LeadDistributionService {
         };
       }
 
-      // Step 3: Apply round-robin to select agency
+      // Step 3: Apply round-robin to select agency (excluding rejected agencies)
       const selectedAgency = await this.selectAgencyRoundRobin(
         agenciesWithCapacity,
-        lead.territory || lead.zipcode || lead.zip_code
+        lead.territory || lead.zipcode || lead.zip_code,
+        excludeAgencyIds
       );
 
       // Step 4: Assign lead to agency
@@ -234,9 +244,10 @@ class LeadDistributionService {
    * Select agency using round-robin algorithm
    * @param {Array} agencies - Agencies with capacity
    * @param {string} territory - Territory for sequence tracking
+   * @param {Array} excludeAgencyIds - Optional array of agency IDs to exclude
    * @returns {Object} - Selected agency
    */
-  async selectAgencyRoundRobin(agencies, territory) {
+  async selectAgencyRoundRobin(agencies, territory, excludeAgencyIds = []) {
     try {
       if (!agencies || agencies.length === 0) {
         throw new Error('No agencies provided for round-robin selection');
@@ -265,16 +276,28 @@ class LeadDistributionService {
         console.log('lead_distribution_sequence table not found, using simple round-robin');
       }
 
+      // Filter out excluded agencies from sequences
+      const validSequences = sequences.filter(s => !excludeAgencyIds.includes(s.agency_id));
+      
       // Create map of agency IDs to their last assignment time
       const sequenceMap = new Map(
-        sequences.map(s => [s.agency_id, s.last_assigned_at])
+        validSequences.map(s => [s.agency_id, s.last_assigned_at])
       );
 
+      // Filter agencies to exclude those in excludeAgencyIds
+      const availableAgencies = agencies.filter(agency => 
+        !excludeAgencyIds.includes(agency.id)
+      );
+
+      if (availableAgencies.length === 0) {
+        throw new Error('No agencies available after exclusions');
+      }
+
       // Find agency that was assigned longest ago (or never assigned)
-      let selectedAgency = agencies[0];
+      let selectedAgency = availableAgencies[0];
       let oldestAssignment = sequenceMap.get(selectedAgency.id) || '1970-01-01';
 
-      for (const agency of agencies) {
+      for (const agency of availableAgencies) {
         const lastAssigned = sequenceMap.get(agency.id) || '1970-01-01';
         if (lastAssigned < oldestAssignment) {
           oldestAssignment = lastAssigned;

@@ -317,10 +317,11 @@ async function rejectLead(req, res) {
 
     if (updateError) throw updateError;
 
-    // Update lead
+    // Update lead status to pending_reassignment
     const { error: leadUpdateError } = await supabase
       .from('leads')
       .update({
+        status: 'pending_reassignment',
         rejection_reason: reason || 'Rejected by agency',
         rejected_at: new Date().toISOString(),
         updated_at: new Date().toISOString()
@@ -331,23 +332,102 @@ async function rejectLead(req, res) {
       console.warn('Error updating lead:', leadUpdateError);
     }
 
-    // Round-robin: Assign to next agency
-    // Import and use lead distribution service
+    // Log rejection action
     try {
-      const leadDistributionService = require('../services/leadDistributionService');
-      await leadDistributionService.distributeLead({
-        id: leadId,
-        zipcode: lead.zipcode,
-        industry_type: lead.industry || lead.source
+      const auditService = require('../services/auditService');
+      await auditService.log({
+        action: 'lead_rejected',
+        resource_type: 'lead',
+        resource_id: leadId.toString(),
+        metadata: { 
+          agency_id: agencyId,
+          rejection_reason: reason || 'No reason provided'
+        },
+        status: 'success',
+        message: `Lead ${leadId} rejected by agency ${agencyId}`
       });
     } catch (e) {
-      console.warn('Could not reassign lead via round-robin:', e.message);
-      // Continue - lead was rejected successfully
+      console.warn('Could not log rejection:', e.message);
+    }
+
+    // Round-robin: Re-assign to next agency (excluding the one that rejected)
+    let redistributionResult = null;
+    try {
+      const leadDistributionService = require('../services/leadDistributionService');
+      
+      // Get full lead data for re-distribution
+      const { data: fullLead, error: leadFetchError } = await supabase
+        .from('leads')
+        .select('*')
+        .eq('id', leadId)
+        .single();
+
+      if (leadFetchError || !fullLead) {
+        throw new Error('Could not fetch lead for re-distribution');
+      }
+
+      // Re-distribute, excluding the agency that rejected
+      redistributionResult = await leadDistributionService.distributeLead(
+        fullLead,
+        [agencyId] // Exclude the rejecting agency
+      );
+
+      if (redistributionResult.success) {
+        // Log successful re-assignment
+        try {
+          const auditService = require('../services/auditService');
+          await auditService.logLeadAssignment(
+            leadId.toString(),
+            redistributionResult.agency_id,
+            redistributionResult.assignment_id,
+            'reassigned_after_rejection'
+          );
+        } catch (e) {
+          console.warn('Could not log re-assignment:', e.message);
+        }
+
+        // Update lead status to assigned
+        await supabase
+          .from('leads')
+          .update({
+            status: 'assigned',
+            assigned_agency_id: redistributionResult.agency_id,
+            assigned_at: new Date().toISOString(),
+            updated_at: new Date().toISOString()
+          })
+          .eq('id', leadId);
+      } else {
+        // No eligible agencies found - set status to unassigned
+        await supabase
+          .from('leads')
+          .update({
+            status: 'unassigned',
+            updated_at: new Date().toISOString()
+          })
+          .eq('id', leadId);
+      }
+    } catch (e) {
+      console.error('Could not reassign lead via round-robin:', e.message);
+      // Set lead to unassigned if re-distribution failed
+      await supabase
+        .from('leads')
+        .update({
+          status: 'unassigned',
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', leadId);
     }
 
     res.json({
       success: true,
-      message: 'Lead rejected. It will be reassigned to another agency.'
+      message: redistributionResult?.success 
+        ? 'Lead rejected and reassigned to another agency successfully'
+        : 'Lead rejected. Re-assignment attempted but no eligible agencies found.',
+      data: redistributionResult ? {
+        reassigned: redistributionResult.success,
+        new_agency_id: redistributionResult.agency_id,
+        new_assignment_id: redistributionResult.assignment_id
+      } : null
     });
   } catch (error) {
     console.error('Error rejecting lead:', error);
