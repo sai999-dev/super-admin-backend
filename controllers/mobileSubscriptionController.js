@@ -813,7 +813,26 @@ exports.cancel = async (req, res) => {
 
       if (error) throw error;
 
-      // TODO: Send cancellation confirmation email
+      // Send cancellation confirmation email
+      try {
+        const emailService = require('../services/emailService');
+        const { data: agency } = await supabase
+          .from('agencies')
+          .select('email')
+          .eq('id', agencyId)
+          .single();
+        
+        if (agency && agency.email) {
+          await emailService.sendCancellationConfirmationEmail(agency.email, {
+            plan_name: planData.plan_name || planData.name,
+            end_date: cancellationData.end_date,
+            cancellation_reason: cancellationData.reason
+          });
+        }
+      } catch (emailError) {
+        // Log but don't fail - email is non-critical
+        console.warn('Failed to send cancellation email (non-critical):', emailError.message);
+      }
 
       return res.json({
         success: true,

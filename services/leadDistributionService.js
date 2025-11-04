@@ -7,7 +7,7 @@
  * - Fair allocation across agencies
  */
 
-import { supabase } from '../config/supabaseClient.js';
+const supabase = require('../config/supabaseClient');
 
 class LeadDistributionService {
   /**
@@ -21,8 +21,8 @@ class LeadDistributionService {
 
       // Step 1: Find eligible agencies based on territory and industry
       const eligibleAgencies = await this.findEligibleAgencies(
-        lead.territory || lead.zipcode,
-        lead.industry_type
+        lead.territory || lead.zipcode || lead.zip_code,
+        lead.industry_type || lead.industry
       );
 
       if (eligibleAgencies.length === 0) {
@@ -49,14 +49,23 @@ class LeadDistributionService {
       // Step 3: Apply round-robin to select agency
       const selectedAgency = await this.selectAgencyRoundRobin(
         agenciesWithCapacity,
-        lead.territory || lead.zipcode
+        lead.territory || lead.zipcode || lead.zip_code
       );
 
       // Step 4: Assign lead to agency
       const assignment = await this.assignLeadToAgency(lead.id, selectedAgency.id);
 
       // Step 5: Update distribution sequence
-      await this.updateDistributionSequence(selectedAgency.id, lead.territory || lead.zipcode);
+      await this.updateDistributionSequence(selectedAgency.id, lead.territory || lead.zipcode || lead.zip_code);
+
+      // Step 6: Send push notification to agency
+      try {
+        const notificationService = require('./notificationService');
+        await notificationService.notifyLeadAssigned(selectedAgency.id, lead.id, lead);
+      } catch (notifError) {
+        // Log but don't fail - notification is non-critical
+        console.warn('Failed to send notification (non-critical):', notifError.message);
+      }
 
       console.log(`✅ Lead ${lead.id} assigned to agency ${selectedAgency.business_name}`);
 
@@ -87,44 +96,74 @@ class LeadDistributionService {
    */
   async findEligibleAgencies(territory, industry) {
     try {
-      // Query agencies with active subscriptions covering this territory
+      if (!territory) {
+        console.warn('⚠️ No territory provided for lead distribution');
+        return [];
+      }
+
+      // Query agencies with active subscriptions
+      // First, get all active agencies
       const { data: agencies, error } = await supabase
         .from('agencies')
         .select(`
           id,
           business_name,
           industry_type,
-          is_active,
-          subscription_plan_id,
-          subscriptions:agency_subscriptions!inner(
-            id,
-            territories,
-            status,
-            is_active
-          )
+          is_active
         `)
-        .eq('is_active', true)
-        .eq('subscriptions.is_active', true)
-        .eq('subscriptions.status', 'active');
+        .eq('is_active', true);
 
       if (error) throw error;
 
-      // Filter by territory match
-      const matchingAgencies = agencies.filter(agency => {
-        // Check if agency's subscribed territories include this lead's territory
-        const territories = agency.subscriptions[0]?.territories || [];
-        return territories.some(t => 
-          t.zipcode === territory || 
-          t.city === territory ||
-          territory.startsWith(t.zipcode?.substring(0, 3)) // Partial zipcode match
-        );
-      });
+      // Then get their subscriptions with territories
+      const eligibleAgencies = [];
+      
+      for (const agency of agencies || []) {
+        // Get agency's active subscriptions
+        const { data: subscriptions, error: subError } = await supabase
+          .from('agency_subscriptions')
+          .select('id, territories, status, is_active')
+          .eq('agency_id', agency.id)
+          .eq('is_active', true)
+          .eq('status', 'active');
+
+        if (subError) {
+          console.warn(`Error fetching subscriptions for agency ${agency.id}:`, subError.message);
+          continue;
+        }
+
+        if (!subscriptions || subscriptions.length === 0) continue;
+
+        // Check if any subscription covers this territory
+        const coversTerritory = subscriptions.some(sub => {
+          const territories = sub.territories || [];
+          if (Array.isArray(territories)) {
+            return territories.some(t => {
+              const zipcode = t.zipcode || t.zip_code || t;
+              const city = t.city || '';
+              return zipcode === territory || 
+                     city === territory ||
+                     (typeof zipcode === 'string' && territory.startsWith(zipcode.substring(0, 3)));
+            });
+          }
+          return false;
+        });
+
+        if (coversTerritory) {
+          eligibleAgencies.push({
+            ...agency,
+            subscriptions
+          });
+        }
+      }
 
       // Prioritize agencies matching the industry
-      const industryMatches = matchingAgencies.filter(a => a.industry_type === industry);
+      const industryMatches = eligibleAgencies.filter(a => 
+        a.industry_type && industry && a.industry_type.toLowerCase() === industry.toLowerCase()
+      );
       
       // Return industry matches first, then all matches
-      return industryMatches.length > 0 ? industryMatches : matchingAgencies;
+      return industryMatches.length > 0 ? industryMatches : eligibleAgencies;
 
     } catch (error) {
       console.error('Error finding eligible agencies:', error);
@@ -141,31 +180,50 @@ class LeadDistributionService {
     const agenciesWithCapacity = [];
 
     for (const agency of agencies) {
-      // Get agency's subscription plan limits
-      const { data: plan } = await supabase
-        .from('subscription_plans')
-        .select('max_units, base_units')
-        .eq('id', agency.subscription_plan_id)
-        .single();
+      try {
+        // Get agency's subscription plan
+        const { data: subscriptions } = await supabase
+          .from('agency_subscriptions')
+          .select('plan_id')
+          .eq('agency_id', agency.id)
+          .eq('is_active', true)
+          .eq('status', 'active')
+          .limit(1)
+          .single();
 
-      if (!plan) continue;
+        if (!subscriptions || !subscriptions.plan_id) continue;
 
-      // Get current lead count for this month
-      const { count: leadCount } = await supabase
-        .from('lead_assignments')
-        .select('*', { count: 'only' })
-        .eq('agency_id', agency.id)
-        .gte('assigned_at', new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString());
+        const { data: plan } = await supabase
+          .from('subscription_plans')
+          .select('max_units, base_units, min_units')
+          .eq('id', subscriptions.plan_id)
+          .single();
 
-      // Check if agency has capacity
-      const maxLeads = plan.max_units || plan.base_units || 100;
-      if (leadCount < maxLeads) {
-        agenciesWithCapacity.push({
-          ...agency,
-          current_lead_count: leadCount,
-          max_leads: maxLeads,
-          capacity_remaining: maxLeads - leadCount
-        });
+        if (!plan) continue;
+
+        // Get current lead count for this month
+        const startOfMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString();
+        const { count: leadCount } = await supabase
+          .from('lead_assignments')
+          .select('*', { count: 'exact', head: true })
+          .eq('agency_id', agency.id)
+          .gte('assigned_at', startOfMonth);
+
+        // Check if agency has capacity
+        const maxLeads = plan.max_units || plan.base_units || 100;
+        const currentCount = leadCount || 0;
+        
+        if (currentCount < maxLeads) {
+          agenciesWithCapacity.push({
+            ...agency,
+            current_lead_count: currentCount,
+            max_leads: maxLeads,
+            capacity_remaining: maxLeads - currentCount
+          });
+        }
+      } catch (error) {
+        console.warn(`Error checking capacity for agency ${agency.id}:`, error.message);
+        continue;
       }
     }
 
@@ -180,18 +238,36 @@ class LeadDistributionService {
    */
   async selectAgencyRoundRobin(agencies, territory) {
     try {
-      // Get current distribution sequence for this territory
-      const { data: sequences, error } = await supabase
-        .from('lead_distribution_sequence')
-        .select('*')
-        .eq('territory', territory)
-        .order('last_assigned_at', { ascending: true });
+      if (!agencies || agencies.length === 0) {
+        throw new Error('No agencies provided for round-robin selection');
+      }
 
-      if (error) throw error;
+      // If only one agency, return it
+      if (agencies.length === 1) {
+        return agencies[0];
+      }
+
+      // Get current distribution sequence for this territory
+      // Check if lead_distribution_sequence table exists
+      let sequences = [];
+      try {
+        const { data, error } = await supabase
+          .from('lead_distribution_sequence')
+          .select('*')
+          .eq('territory', territory || 'default')
+          .order('last_assigned_at', { ascending: true });
+
+        if (!error && data) {
+          sequences = data;
+        }
+      } catch (error) {
+        // Table might not exist - that's okay, we'll use fallback
+        console.log('lead_distribution_sequence table not found, using simple round-robin');
+      }
 
       // Create map of agency IDs to their last assignment time
       const sequenceMap = new Map(
-        sequences?.map(s => [s.agency_id, s.last_assigned_at]) || []
+        sequences.map(s => [s.agency_id, s.last_assigned_at])
       );
 
       // Find agency that was assigned longest ago (or never assigned)
@@ -222,15 +298,17 @@ class LeadDistributionService {
    * @returns {Object} - Assignment record
    */
   async assignLeadToAgency(leadId, agencyId) {
+    const assignmentData = {
+      lead_id: leadId,
+      agency_id: agencyId,
+      assigned_at: new Date().toISOString(),
+      assignment_method: 'auto_distribution',
+      status: 'pending'
+    };
+
     const { data: assignment, error } = await supabase
       .from('lead_assignments')
-      .insert({
-        lead_id: leadId,
-        agency_id: agencyId,
-        assigned_at: new Date().toISOString(),
-        assignment_method: 'auto_distribution',
-        status: 'assigned'
-      })
+      .insert(assignmentData)
       .select()
       .single();
 
@@ -242,7 +320,8 @@ class LeadDistributionService {
       .update({ 
         status: 'assigned',
         assigned_agency_id: agencyId,
-        assigned_at: new Date().toISOString()
+        assigned_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
       })
       .eq('id', leadId);
 
@@ -255,34 +334,47 @@ class LeadDistributionService {
    * @param {string} territory - Territory
    */
   async updateDistributionSequence(agencyId, territory) {
-    const { data: existing } = await supabase
-      .from('lead_distribution_sequence')
-      .select('*')
-      .eq('agency_id', agencyId)
-      .eq('territory', territory)
-      .single();
+    try {
+      const territoryKey = territory || 'default';
+      
+      // Check if sequence table exists
+      const { data: existing, error: fetchError } = await supabase
+        .from('lead_distribution_sequence')
+        .select('*')
+        .eq('agency_id', agencyId)
+        .eq('territory', territoryKey)
+        .single();
 
-    if (existing) {
-      // Update existing sequence
-      await supabase
-        .from('lead_distribution_sequence')
-        .update({
-          sequence_number: existing.sequence_number + 1,
-          last_assigned_at: new Date().toISOString(),
-          total_leads_assigned: existing.total_leads_assigned + 1
-        })
-        .eq('id', existing.id);
-    } else {
-      // Create new sequence
-      await supabase
-        .from('lead_distribution_sequence')
-        .insert({
-          agency_id: agencyId,
-          territory: territory,
-          sequence_number: 1,
-          last_assigned_at: new Date().toISOString(),
-          total_leads_assigned: 1
-        });
+      if (fetchError && fetchError.code === '42P01') {
+        // Table doesn't exist - skip sequence tracking
+        return;
+      }
+
+      if (existing) {
+        // Update existing sequence
+        await supabase
+          .from('lead_distribution_sequence')
+          .update({
+            sequence_number: (existing.sequence_number || 0) + 1,
+            last_assigned_at: new Date().toISOString(),
+            total_leads_assigned: (existing.total_leads_assigned || 0) + 1
+          })
+          .eq('id', existing.id);
+      } else {
+        // Create new sequence
+        await supabase
+          .from('lead_distribution_sequence')
+          .insert({
+            agency_id: agencyId,
+            territory: territoryKey,
+            sequence_number: 1,
+            last_assigned_at: new Date().toISOString(),
+            total_leads_assigned: 1
+          });
+      }
+    } catch (error) {
+      // Non-critical - log but don't fail
+      console.warn('Error updating distribution sequence:', error.message);
     }
   }
 
@@ -321,31 +413,47 @@ class LeadDistributionService {
    * @returns {Object} - Distribution stats
    */
   async getDistributionStats(territory = null) {
-    let query = supabase
-      .from('lead_distribution_sequence')
-      .select('*');
+    try {
+      let query = supabase.from('lead_distribution_sequence').select('*');
 
-    if (territory) {
-      query = query.eq('territory', territory);
+      if (territory) {
+        query = query.eq('territory', territory);
+      }
+
+      const { data: sequences, error } = await query;
+
+      if (error && error.code === '42P01') {
+        // Table doesn't exist
+        return {
+          total_agencies: 0,
+          total_leads_distributed: 0,
+          by_agency: []
+        };
+      }
+
+      if (error) throw error;
+
+      const stats = {
+        total_agencies: sequences?.length || 0,
+        total_leads_distributed: (sequences || []).reduce((sum, s) => sum + (s.total_leads_assigned || 0), 0),
+        by_agency: (sequences || []).map(s => ({
+          agency_id: s.agency_id,
+          territory: s.territory,
+          leads_assigned: s.total_leads_assigned || 0,
+          last_assignment: s.last_assigned_at
+        }))
+      };
+
+      return stats;
+    } catch (error) {
+      console.error('Error getting distribution stats:', error);
+      return {
+        total_agencies: 0,
+        total_leads_distributed: 0,
+        by_agency: []
+      };
     }
-
-    const { data: sequences, error } = await query;
-
-    if (error) throw error;
-
-    const stats = {
-      total_agencies: sequences.length,
-      total_leads_distributed: sequences.reduce((sum, s) => sum + s.total_leads_assigned, 0),
-      by_agency: sequences.map(s => ({
-        agency_id: s.agency_id,
-        territory: s.territory,
-        leads_assigned: s.total_leads_assigned,
-        last_assignment: s.last_assigned_at
-      }))
-    };
-
-    return stats;
   }
 }
 
-export default new LeadDistributionService();
+module.exports = new LeadDistributionService();

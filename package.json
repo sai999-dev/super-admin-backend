@@ -28,5 +28,11 @@
     "pg": "^8.16.3",
     "sequelize": "^6.37.7",
     "uuid": "^13.0.0"
+  },
+  "optionalDependencies": {
+    "@sendgrid/mail": "^8.1.0",
+    "nodemailer": "^6.9.7",
+    "aws-sdk": "^2.1500.0",
+    "firebase-admin": "^12.0.0"
   }
 }

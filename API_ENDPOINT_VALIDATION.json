@@ -1,0 +1,1202 @@
+{
+  "timestamp": "2025-11-03T16:50:23.685Z",
+  "routes": [
+    {
+      "file": "adminAgenciesRoutes.js",
+      "isRegistered": false,
+      "routes": [],
+      "controllers": [],
+      "status": "unregistered"
+    },
+    {
+      "file": "adminAgencySubscriptionsRoutes.js",
+      "isRegistered": false,
+      "routes": [],
+      "controllers": [],
+      "status": "unregistered"
+    },
+    {
+      "file": "adminDocumentVerificationRoutes.js",
+      "isRegistered": false,
+      "routes": [
+        {
+          "method": "GET",
+          "path": "/verification-documents",
+          "handler": "documentVerificationController.listDocuments",
+          "controller": "documentVerificationController",
+          "function": "listDocuments",
+          "status": "broken"
+        },
+        {
+          "method": "GET",
+          "path": "/verification-documents/:id/download",
+          "handler": "documentVerificationController.downloadDocument",
+          "controller": "documentVerificationController",
+          "function": "downloadDocument",
+          "status": "broken"
+        },
+        {
+          "method": "PUT",
+          "path": "/verification-documents/:id/approve",
+          "handler": "documentVerificationController.approveDocument",
+          "controller": "documentVerificationController",
+          "function": "approveDocument",
+          "status": "broken"
+        },
+        {
+          "method": "PUT",
+          "path": "/verification-documents/:id/reject",
+          "handler": "documentVerificationController.rejectDocument",
+          "controller": "documentVerificationController",
+          "function": "rejectDocument",
+          "status": "broken"
+        }
+      ],
+      "controllers": [
+        {
+          "name": "documentVerificationController",
+          "exists": false,
+          "functions": []
+        }
+      ],
+      "status": "unregistered"
+    },
+    {
+      "file": "adminEnhancedSubscriptionsRoutes.js",
+      "isRegistered": false,
+      "routes": [],
+      "controllers": [],
+      "status": "unregistered"
+    },
+    {
+      "file": "adminFinancialRoutes.js",
+      "isRegistered": false,
+      "routes": [],
+      "controllers": [],
+      "status": "unregistered"
+    },
+    {
+      "file": "adminLeadsRoutes.js",
+      "isRegistered": false,
+      "routes": [
+        {
+          "method": "GET",
+          "path": "/downloads/:filename",
+          "handler": "[\r\n    param('filename'",
+          "controller": "adminLeadsController",
+          "function": "[\r\n    param('filename'",
+          "status": "broken"
+        }
+      ],
+      "controllers": [
+        {
+          "name": "adminLeadsController",
+          "exists": false,
+          "functions": []
+        }
+      ],
+      "status": "unregistered"
+    },
+    {
+      "file": "adminPortalsRoutes.js",
+      "isRegistered": false,
+      "routes": [],
+      "controllers": [],
+      "status": "unregistered"
+    },
+    {
+      "file": "adminRolesRoutes.js",
+      "isRegistered": false,
+      "routes": [],
+      "controllers": [],
+      "status": "unregistered"
+    },
+    {
+      "file": "adminRoutes.js",
+      "isRegistered": false,
+      "routes": [],
+      "controllers": [],
+      "status": "unregistered"
+    },
+    {
+      "file": "adminSystemRoutes.js",
+      "isRegistered": false,
+      "routes": [],
+      "controllers": [],
+      "status": "unregistered"
+    },
+    {
+      "file": "adminUsersRoutes.js",
+      "isRegistered": false,
+      "routes": [],
+      "controllers": [],
+      "status": "unregistered"
+    },
+    {
+      "file": "adminWebhooksRoutes.js",
+      "isRegistered": false,
+      "routes": [],
+      "controllers": [],
+      "status": "unregistered"
+    },
+    {
+      "file": "agencyRoutes.js",
+      "isRegistered": false,
+      "routes": [],
+      "controllers": [
+        {
+          "name": "agencyController",
+          "exists": false,
+          "functions": []
+        }
+      ],
+      "status": "unregistered"
+    },
+    {
+      "file": "leadDistributionRoutes.js",
+      "isRegistered": false,
+      "routes": [
+        {
+          "method": "POST",
+          "path": "/distribution/:leadId",
+          "handler": "distributeLeadManually",
+          "controller": "leadDistributionController",
+          "function": "distributeLeadManually",
+          "status": "broken"
+        },
+        {
+          "method": "POST",
+          "path": "/distribution/batch",
+          "handler": "batchDistributeLeads",
+          "controller": "leadDistributionController",
+          "function": "batchDistributeLeads",
+          "status": "broken"
+        },
+        {
+          "method": "GET",
+          "path": "/distribution/stats",
+          "handler": "getDistributionStats",
+          "controller": "leadDistributionController",
+          "function": "getDistributionStats",
+          "status": "broken"
+        },
+        {
+          "method": "GET",
+          "path": "/distribution/:leadId/eligibility",
+          "handler": "testDistributionEligibility",
+          "controller": "leadDistributionController",
+          "function": "testDistributionEligibility",
+          "status": "broken"
+        },
+        {
+          "method": "PUT",
+          "path": "/distribution/:leadId/reassign",
+          "handler": "reassignLead",
+          "controller": "leadDistributionController",
+          "function": "reassignLead",
+          "status": "broken"
+        }
+      ],
+      "controllers": [
+        {
+          "name": "leadDistributionController",
+          "exists": false,
+          "functions": []
+        }
+      ],
+      "status": "unregistered"
+    },
+    {
+      "file": "metricsRoutes.js",
+      "isRegistered": false,
+      "routes": [],
+      "controllers": [],
+      "status": "unregistered"
+    },
+    {
+      "file": "mobileAuthRoutes.js",
+      "isRegistered": false,
+      "routes": [],
+      "controllers": [],
+      "status": "unregistered"
+    },
+    {
+      "file": "mobileRoutes.js",
+      "isRegistered": false,
+      "routes": [
+        {
+          "method": "GET",
+          "path": "/subscription/plans",
+          "handler": "mobileSubscriptionController.getAvailablePlans",
+          "controller": "mobileSubscriptionController",
+          "function": "getAvailablePlans",
+          "status": "broken"
+        },
+        {
+          "method": "GET",
+          "path": "/subscription/status",
+          "handler": "mobileSubscriptionController.getSubscriptionStatus",
+          "controller": "mobileSubscriptionController",
+          "function": "getSubscriptionStatus",
+          "status": "broken"
+        },
+        {
+          "method": "GET",
+          "path": "/billing/history",
+          "handler": "mobileSubscriptionController.getBillingHistory",
+          "controller": "mobileSubscriptionController",
+          "function": "getBillingHistory",
+          "status": "broken"
+        },
+        {
+          "method": "GET",
+          "path": "/billing/upcoming",
+          "handler": "mobileSubscriptionController.getUpcomingBilling",
+          "controller": "mobileSubscriptionController",
+          "function": "getUpcomingBilling",
+          "status": "broken"
+        },
+        {
+          "method": "POST",
+          "path": "/subscription/subscribe",
+          "handler": "mobileSubscriptionController.subscribe",
+          "controller": "mobileSubscriptionController",
+          "function": "subscribe",
+          "status": "broken"
+        },
+        {
+          "method": "PUT",
+          "path": "/subscription/upgrade",
+          "handler": "mobileSubscriptionController.upgrade",
+          "controller": "mobileSubscriptionController",
+          "function": "upgrade",
+          "status": "broken"
+        },
+        {
+          "method": "PUT",
+          "path": "/subscription/downgrade",
+          "handler": "mobileSubscriptionController.downgrade",
+          "controller": "mobileSubscriptionController",
+          "function": "downgrade",
+          "status": "broken"
+        },
+        {
+          "method": "POST",
+          "path": "/subscription/cancel",
+          "handler": "mobileSubscriptionController.cancel",
+          "controller": "mobileSubscriptionController",
+          "function": "cancel",
+          "status": "broken"
+        },
+        {
+          "method": "GET",
+          "path": "/subscription/invoices",
+          "handler": "mobileSubscriptionController.getInvoices",
+          "controller": "mobileSubscriptionController",
+          "function": "getInvoices",
+          "status": "broken"
+        },
+        {
+          "method": "PUT",
+          "path": "/payment-method",
+          "handler": "mobileSubscriptionController.updatePaymentMethod",
+          "controller": "mobileSubscriptionController",
+          "function": "updatePaymentMethod",
+          "status": "broken"
+        },
+        {
+          "method": "GET",
+          "path": "/territories",
+          "handler": "mobileTerritoryController.getAgencyTerritories",
+          "controller": "mobileSubscriptionController",
+          "function": "getAgencyTerritories",
+          "status": "broken"
+        },
+        {
+          "method": "POST",
+          "path": "/territories",
+          "handler": "mobileTerritoryController.addTerritory",
+          "controller": "mobileSubscriptionController",
+          "function": "addTerritory",
+          "status": "broken"
+        },
+        {
+          "method": "DELETE",
+          "path": "/territories/:zipcode",
+          "handler": "mobileTerritoryController.removeTerritory",
+          "controller": "mobileSubscriptionController",
+          "function": "removeTerritory",
+          "status": "broken"
+        },
+        {
+          "method": "GET",
+          "path": "/territories/available",
+          "handler": "mobileTerritoryController.getAvailableTerritories",
+          "controller": "mobileSubscriptionController",
+          "function": "getAvailableTerritories",
+          "status": "broken"
+        },
+        {
+          "method": "POST",
+          "path": "/territories/request",
+          "handler": "mobileTerritoryController.requestTerritoryAddition",
+          "controller": "mobileSubscriptionController",
+          "function": "requestTerritoryAddition",
+          "status": "broken"
+        },
+        {
+          "method": "PUT",
+          "path": "/territories/:territoryId",
+          "handler": "mobileTerritoryController.updateTerritory",
+          "controller": "mobileSubscriptionController",
+          "function": "updateTerritory",
+          "status": "broken"
+        },
+        {
+          "method": "DELETE",
+          "path": "/territories/:territoryId",
+          "handler": "mobileTerritoryController.requestTerritoryRemoval",
+          "controller": "mobileSubscriptionController",
+          "function": "requestTerritoryRemoval",
+          "status": "broken"
+        },
+        {
+          "method": "GET",
+          "path": "/conversations",
+          "handler": "mobileMessagingController.getConversations",
+          "controller": "mobileSubscriptionController",
+          "function": "getConversations",
+          "status": "broken"
+        },
+        {
+          "method": "GET",
+          "path": "/conversations/:conversationId/messages",
+          "handler": "mobileMessagingController.getConversationMessages",
+          "controller": "mobileSubscriptionController",
+          "function": "getConversationMessages",
+          "status": "broken"
+        },
+        {
+          "method": "POST",
+          "path": "/conversations/:conversationId/messages",
+          "handler": "mobileMessagingController.sendMessage",
+          "controller": "mobileSubscriptionController",
+          "function": "sendMessage",
+          "status": "broken"
+        },
+        {
+          "method": "POST",
+          "path": "/conversations",
+          "handler": "mobileMessagingController.startConversation",
+          "controller": "mobileSubscriptionController",
+          "function": "startConversation",
+          "status": "broken"
+        },
+        {
+          "method": "PUT",
+          "path": "/conversations/:conversationId/status",
+          "handler": "mobileMessagingController.updateConversationStatus",
+          "controller": "mobileSubscriptionController",
+          "function": "updateConversationStatus",
+          "status": "broken"
+        },
+        {
+          "method": "GET",
+          "path": "/message-templates",
+          "handler": "mobileMessagingController.getMessageTemplates",
+          "controller": "mobileSubscriptionController",
+          "function": "getMessageTemplates",
+          "status": "broken"
+        },
+        {
+          "method": "POST",
+          "path": "/message-templates",
+          "handler": "mobileMessagingController.createMessageTemplate",
+          "controller": "mobileSubscriptionController",
+          "function": "createMessageTemplate",
+          "status": "broken"
+        },
+        {
+          "method": "PUT",
+          "path": "/message-templates/:templateId",
+          "handler": "mobileMessagingController.updateMessageTemplate",
+          "controller": "mobileSubscriptionController",
+          "function": "updateMessageTemplate",
+          "status": "broken"
+        },
+        {
+          "method": "DELETE",
+          "path": "/message-templates/:templateId",
+          "handler": "mobileMessagingController.deleteMessageTemplate",
+          "controller": "mobileSubscriptionController",
+          "function": "deleteMessageTemplate",
+          "status": "broken"
+        },
+        {
+          "method": "GET",
+          "path": "/leads",
+          "handler": "mobileLeadsController.getLeads",
+          "controller": "mobileSubscriptionController",
+          "function": "getLeads",
+          "status": "broken"
+        },
+        {
+          "method": "GET",
+          "path": "/leads/:id",
+          "handler": "mobileLeadsController.getLeadById",
+          "controller": "mobileSubscriptionController",
+          "function": "getLeadById",
+          "status": "broken"
+        },
+        {
+          "method": "PUT",
+          "path": "/leads/:id/accept",
+          "handler": "mobileLeadsController.acceptLead",
+          "controller": "mobileSubscriptionController",
+          "function": "acceptLead",
+          "status": "broken"
+        },
+        {
+          "method": "PUT",
+          "path": "/leads/:id/reject",
+          "handler": "mobileLeadsController.rejectLead",
+          "controller": "mobileSubscriptionController",
+          "function": "rejectLead",
+          "status": "broken"
+        },
+        {
+          "method": "PUT",
+          "path": "/leads/:id/status",
+          "handler": "mobileLeadsController.updateLeadStatus",
+          "controller": "mobileSubscriptionController",
+          "function": "updateLeadStatus",
+          "status": "broken"
+        },
+        {
+          "method": "PUT",
+          "path": "/leads/:id/view",
+          "handler": "mobileLeadsController.markLeadViewed",
+          "controller": "mobileSubscriptionController",
+          "function": "markLeadViewed",
+          "status": "broken"
+        },
+        {
+          "method": "POST",
+          "path": "/leads/:id/call",
+          "handler": "mobileLeadsController.trackCall",
+          "controller": "mobileSubscriptionController",
+          "function": "trackCall",
+          "status": "broken"
+        },
+        {
+          "method": "POST",
+          "path": "/leads/:id/notes",
+          "handler": "mobileLeadsController.addNotes",
+          "controller": "mobileSubscriptionController",
+          "function": "addNotes",
+          "status": "broken"
+        },
+        {
+          "method": "POST",
+          "path": "/auth/register-device",
+          "handler": "mobileDeviceController.registerDevice",
+          "controller": "mobileSubscriptionController",
+          "function": "registerDevice",
+          "status": "broken"
+        },
+        {
+          "method": "PUT",
+          "path": "/auth/update-device",
+          "handler": "mobileDeviceController.updateDevice",
+          "controller": "mobileSubscriptionController",
+          "function": "updateDevice",
+          "status": "broken"
+        },
+        {
+          "method": "DELETE",
+          "path": "/auth/unregister-device",
+          "handler": "mobileDeviceController.unregisterDevice",
+          "controller": "mobileSubscriptionController",
+          "function": "unregisterDevice",
+          "status": "broken"
+        },
+        {
+          "method": "GET",
+          "path": "/notifications/settings",
+          "handler": "mobileNotificationController.getSettings",
+          "controller": "mobileSubscriptionController",
+          "function": "getSettings",
+          "status": "broken"
+        },
+        {
+          "method": "PUT",
+          "path": "/notifications/settings",
+          "handler": "mobileNotificationController.updateSettings",
+          "controller": "mobileSubscriptionController",
+          "function": "updateSettings",
+          "status": "broken"
+        },
+        {
+          "method": "POST",
+          "path": "/auth/upload-document",
+          "handler": "upload.single('document'",
+          "controller": "mobileSubscriptionController",
+          "function": "single('document'",
+          "status": "broken"
+        },
+        {
+          "method": "GET",
+          "path": "/auth/verification-status",
+          "handler": "documentVerificationController.getVerificationStatus",
+          "controller": "mobileSubscriptionController",
+          "function": "getVerificationStatus",
+          "status": "broken"
+        },
+        {
+          "method": "GET",
+          "path": "/auth/documents",
+          "handler": "documentVerificationController.getDocuments",
+          "controller": "mobileSubscriptionController",
+          "function": "getDocuments",
+          "status": "broken"
+        }
+      ],
+      "controllers": [
+        {
+          "name": "mobileSubscriptionController",
+          "exists": false,
+          "functions": []
+        },
+        {
+          "name": "mobileTerritoryController",
+          "exists": false,
+          "functions": []
+        },
+        {
+          "name": "mobileLeadsController",
+          "exists": false,
+          "functions": []
+        },
+        {
+          "name": "mobileDeviceController",
+          "exists": false,
+          "functions": []
+        },
+        {
+          "name": "mobileNotificationController",
+          "exists": false,
+          "functions": []
+        },
+        {
+          "name": "mobileMessagingController",
+          "exists": false,
+          "functions": []
+        },
+        {
+          "name": "documentVerificationController",
+          "exists": false,
+          "functions": []
+        }
+      ],
+      "status": "unregistered"
+    },
+    {
+      "file": "mobileSubscriptionPurchaseRoutes.js",
+      "isRegistered": false,
+      "routes": [],
+      "controllers": [],
+      "status": "unregistered"
+    },
+    {
+      "file": "subscriptionManagementRoutes.js",
+      "isRegistered": false,
+      "routes": [],
+      "controllers": [],
+      "status": "unregistered"
+    },
+    {
+      "file": "subscriptionRoutes.js",
+      "isRegistered": false,
+      "routes": [],
+      "controllers": [
+        {
+          "name": "subscriptionPlansController",
+          "exists": false,
+          "functions": []
+        },
+        {
+          "name": "subscriptionsController",
+          "exists": false,
+          "functions": []
+        },
+        {
+          "name": "territoriesController",
+          "exists": false,
+          "functions": []
+        },
+        {
+          "name": "billingPaymentsController",
+          "exists": false,
+          "functions": []
+        },
+        {
+          "name": "activeSubscriptionsController",
+          "exists": false,
+          "functions": []
+        }
+      ],
+      "status": "unregistered"
+    },
+    {
+      "file": "supabaseSubscriptionPlansRoutes.js",
+      "isRegistered": false,
+      "routes": [],
+      "controllers": [],
+      "status": "unregistered"
+    }
+  ],
+  "issues": [
+    {
+      "type": "UNREGISTERED_ROUTE",
+      "route": "adminAgenciesRoutes.js",
+      "severity": "HIGH",
+      "message": "Route file adminAgenciesRoutes.js is not registered in server.js"
+    },
+    {
+      "type": "UNREGISTERED_ROUTE",
+      "route": "adminAgencySubscriptionsRoutes.js",
+      "severity": "HIGH",
+      "message": "Route file adminAgencySubscriptionsRoutes.js is not registered in server.js"
+    },
+    {
+      "type": "MISSING_CONTROLLER",
+      "route": "adminDocumentVerificationRoutes.js",
+      "endpoint": "GET /verification-documents",
+      "controller": "documentVerificationController",
+      "severity": "HIGH",
+      "message": "Controller documentVerificationController does not exist"
+    },
+    {
+      "type": "MISSING_CONTROLLER",
+      "route": "adminDocumentVerificationRoutes.js",
+      "endpoint": "GET /verification-documents/:id/download",
+      "controller": "documentVerificationController",
+      "severity": "HIGH",
+      "message": "Controller documentVerificationController does not exist"
+    },
+    {
+      "type": "MISSING_CONTROLLER",
+      "route": "adminDocumentVerificationRoutes.js",
+      "endpoint": "PUT /verification-documents/:id/approve",
+      "controller": "documentVerificationController",
+      "severity": "HIGH",
+      "message": "Controller documentVerificationController does not exist"
+    },
+    {
+      "type": "MISSING_CONTROLLER",
+      "route": "adminDocumentVerificationRoutes.js",
+      "endpoint": "PUT /verification-documents/:id/reject",
+      "controller": "documentVerificationController",
+      "severity": "HIGH",
+      "message": "Controller documentVerificationController does not exist"
+    },
+    {
+      "type": "UNREGISTERED_ROUTE",
+      "route": "adminDocumentVerificationRoutes.js",
+      "severity": "HIGH",
+      "message": "Route file adminDocumentVerificationRoutes.js is not registered in server.js"
+    },
+    {
+      "type": "UNREGISTERED_ROUTE",
+      "route": "adminEnhancedSubscriptionsRoutes.js",
+      "severity": "HIGH",
+      "message": "Route file adminEnhancedSubscriptionsRoutes.js is not registered in server.js"
+    },
+    {
+      "type": "UNREGISTERED_ROUTE",
+      "route": "adminFinancialRoutes.js",
+      "severity": "HIGH",
+      "message": "Route file adminFinancialRoutes.js is not registered in server.js"
+    },
+    {
+      "type": "MISSING_CONTROLLER",
+      "route": "adminLeadsRoutes.js",
+      "endpoint": "GET /downloads/:filename",
+      "controller": "adminLeadsController",
+      "severity": "HIGH",
+      "message": "Controller adminLeadsController does not exist"
+    },
+    {
+      "type": "UNREGISTERED_ROUTE",
+      "route": "adminLeadsRoutes.js",
+      "severity": "HIGH",
+      "message": "Route file adminLeadsRoutes.js is not registered in server.js"
+    },
+    {
+      "type": "UNREGISTERED_ROUTE",
+      "route": "adminPortalsRoutes.js",
+      "severity": "HIGH",
+      "message": "Route file adminPortalsRoutes.js is not registered in server.js"
+    },
+    {
+      "type": "UNREGISTERED_ROUTE",
+      "route": "adminRolesRoutes.js",
+      "severity": "HIGH",
+      "message": "Route file adminRolesRoutes.js is not registered in server.js"
+    },
+    {
+      "type": "UNREGISTERED_ROUTE",
+      "route": "adminRoutes.js",
+      "severity": "HIGH",
+      "message": "Route file adminRoutes.js is not registered in server.js"
+    },
+    {
+      "type": "UNREGISTERED_ROUTE",
+      "route": "adminSystemRoutes.js",
+      "severity": "HIGH",
+      "message": "Route file adminSystemRoutes.js is not registered in server.js"
+    },
+    {
+      "type": "UNREGISTERED_ROUTE",
+      "route": "adminUsersRoutes.js",
+      "severity": "HIGH",
+      "message": "Route file adminUsersRoutes.js is not registered in server.js"
+    },
+    {
+      "type": "UNREGISTERED_ROUTE",
+      "route": "adminWebhooksRoutes.js",
+      "severity": "HIGH",
+      "message": "Route file adminWebhooksRoutes.js is not registered in server.js"
+    },
+    {
+      "type": "UNREGISTERED_ROUTE",
+      "route": "agencyRoutes.js",
+      "severity": "HIGH",
+      "message": "Route file agencyRoutes.js is not registered in server.js"
+    },
+    {
+      "type": "MISSING_CONTROLLER",
+      "route": "leadDistributionRoutes.js",
+      "endpoint": "POST /distribution/:leadId",
+      "controller": "leadDistributionController",
+      "severity": "HIGH",
+      "message": "Controller leadDistributionController does not exist"
+    },
+    {
+      "type": "MISSING_CONTROLLER",
+      "route": "leadDistributionRoutes.js",
+      "endpoint": "POST /distribution/batch",
+      "controller": "leadDistributionController",
+      "severity": "HIGH",
+      "message": "Controller leadDistributionController does not exist"
+    },
+    {
+      "type": "MISSING_CONTROLLER",
+      "route": "leadDistributionRoutes.js",
+      "endpoint": "GET /distribution/stats",
+      "controller": "leadDistributionController",
+      "severity": "HIGH",
+      "message": "Controller leadDistributionController does not exist"
+    },
+    {
+      "type": "MISSING_CONTROLLER",
+      "route": "leadDistributionRoutes.js",
+      "endpoint": "GET /distribution/:leadId/eligibility",
+      "controller": "leadDistributionController",
+      "severity": "HIGH",
+      "message": "Controller leadDistributionController does not exist"
+    },
+    {
+      "type": "MISSING_CONTROLLER",
+      "route": "leadDistributionRoutes.js",
+      "endpoint": "PUT /distribution/:leadId/reassign",
+      "controller": "leadDistributionController",
+      "severity": "HIGH",
+      "message": "Controller leadDistributionController does not exist"
+    },
+    {
+      "type": "UNREGISTERED_ROUTE",
+      "route": "leadDistributionRoutes.js",
+      "severity": "HIGH",
+      "message": "Route file leadDistributionRoutes.js is not registered in server.js"
+    },
+    {
+      "type": "UNREGISTERED_ROUTE",
+      "route": "mobileAuthRoutes.js",
+      "severity": "HIGH",
+      "message": "Route file mobileAuthRoutes.js is not registered in server.js"
+    },
+    {
+      "type": "MISSING_CONTROLLER",
+      "route": "mobileRoutes.js",
+      "endpoint": "GET /subscription/plans",
+      "controller": "mobileSubscriptionController",
+      "severity": "HIGH",
+      "message": "Controller mobileSubscriptionController does not exist"
+    },
+    {
+      "type": "MISSING_CONTROLLER",
+      "route": "mobileRoutes.js",
+      "endpoint": "GET /subscription/status",
+      "controller": "mobileSubscriptionController",
+      "severity": "HIGH",
+      "message": "Controller mobileSubscriptionController does not exist"
+    },
+    {
+      "type": "MISSING_CONTROLLER",
+      "route": "mobileRoutes.js",
+      "endpoint": "GET /billing/history",
+      "controller": "mobileSubscriptionController",
+      "severity": "HIGH",
+      "message": "Controller mobileSubscriptionController does not exist"
+    },
+    {
+      "type": "MISSING_CONTROLLER",
+      "route": "mobileRoutes.js",
+      "endpoint": "GET /billing/upcoming",
+      "controller": "mobileSubscriptionController",
+      "severity": "HIGH",
+      "message": "Controller mobileSubscriptionController does not exist"
+    },
+    {
+      "type": "MISSING_CONTROLLER",
+      "route": "mobileRoutes.js",
+      "endpoint": "POST /subscription/subscribe",
+      "controller": "mobileSubscriptionController",
+      "severity": "HIGH",
+      "message": "Controller mobileSubscriptionController does not exist"
+    },
+    {
+      "type": "MISSING_CONTROLLER",
+      "route": "mobileRoutes.js",
+      "endpoint": "PUT /subscription/upgrade",
+      "controller": "mobileSubscriptionController",
+      "severity": "HIGH",
+      "message": "Controller mobileSubscriptionController does not exist"
+    },
+    {
+      "type": "MISSING_CONTROLLER",
+      "route": "mobileRoutes.js",
+      "endpoint": "PUT /subscription/downgrade",
+      "controller": "mobileSubscriptionController",
+      "severity": "HIGH",
+      "message": "Controller mobileSubscriptionController does not exist"
+    },
+    {
+      "type": "MISSING_CONTROLLER",
+      "route": "mobileRoutes.js",
+      "endpoint": "POST /subscription/cancel",
+      "controller": "mobileSubscriptionController",
+      "severity": "HIGH",
+      "message": "Controller mobileSubscriptionController does not exist"
+    },
+    {
+      "type": "MISSING_CONTROLLER",
+      "route": "mobileRoutes.js",
+      "endpoint": "GET /subscription/invoices",
+      "controller": "mobileSubscriptionController",
+      "severity": "HIGH",
+      "message": "Controller mobileSubscriptionController does not exist"
+    },
+    {
+      "type": "MISSING_CONTROLLER",
+      "route": "mobileRoutes.js",
+      "endpoint": "PUT /payment-method",
+      "controller": "mobileSubscriptionController",
+      "severity": "HIGH",
+      "message": "Controller mobileSubscriptionController does not exist"
+    },
+    {
+      "type": "MISSING_CONTROLLER",
+      "route": "mobileRoutes.js",
+      "endpoint": "GET /territories",
+      "controller": "mobileSubscriptionController",
+      "severity": "HIGH",
+      "message": "Controller mobileSubscriptionController does not exist"
+    },
+    {
+      "type": "MISSING_CONTROLLER",
+      "route": "mobileRoutes.js",
+      "endpoint": "POST /territories",
+      "controller": "mobileSubscriptionController",
+      "severity": "HIGH",
+      "message": "Controller mobileSubscriptionController does not exist"
+    },
+    {
+      "type": "MISSING_CONTROLLER",
+      "route": "mobileRoutes.js",
+      "endpoint": "DELETE /territories/:zipcode",
+      "controller": "mobileSubscriptionController",
+      "severity": "HIGH",
+      "message": "Controller mobileSubscriptionController does not exist"
+    },
+    {
+      "type": "MISSING_CONTROLLER",
+      "route": "mobileRoutes.js",
+      "endpoint": "GET /territories/available",
+      "controller": "mobileSubscriptionController",
+      "severity": "HIGH",
+      "message": "Controller mobileSubscriptionController does not exist"
+    },
+    {
+      "type": "MISSING_CONTROLLER",
+      "route": "mobileRoutes.js",
+      "endpoint": "POST /territories/request",
+      "controller": "mobileSubscriptionController",
+      "severity": "HIGH",
+      "message": "Controller mobileSubscriptionController does not exist"
+    },
+    {
+      "type": "MISSING_CONTROLLER",
+      "route": "mobileRoutes.js",
+      "endpoint": "PUT /territories/:territoryId",
+      "controller": "mobileSubscriptionController",
+      "severity": "HIGH",
+      "message": "Controller mobileSubscriptionController does not exist"
+    },
+    {
+      "type": "MISSING_CONTROLLER",
+      "route": "mobileRoutes.js",
+      "endpoint": "DELETE /territories/:territoryId",
+      "controller": "mobileSubscriptionController",
+      "severity": "HIGH",
+      "message": "Controller mobileSubscriptionController does not exist"
+    },
+    {
+      "type": "MISSING_CONTROLLER",
+      "route": "mobileRoutes.js",
+      "endpoint": "GET /conversations",
+      "controller": "mobileSubscriptionController",
+      "severity": "HIGH",
+      "message": "Controller mobileSubscriptionController does not exist"
+    },
+    {
+      "type": "MISSING_CONTROLLER",
+      "route": "mobileRoutes.js",
+      "endpoint": "GET /conversations/:conversationId/messages",
+      "controller": "mobileSubscriptionController",
+      "severity": "HIGH",
+      "message": "Controller mobileSubscriptionController does not exist"
+    },
+    {
+      "type": "MISSING_CONTROLLER",
+      "route": "mobileRoutes.js",
+      "endpoint": "POST /conversations/:conversationId/messages",
+      "controller": "mobileSubscriptionController",
+      "severity": "HIGH",
+      "message": "Controller mobileSubscriptionController does not exist"
+    },
+    {
+      "type": "MISSING_CONTROLLER",
+      "route": "mobileRoutes.js",
+      "endpoint": "POST /conversations",
+      "controller": "mobileSubscriptionController",
+      "severity": "HIGH",
+      "message": "Controller mobileSubscriptionController does not exist"
+    },
+    {
+      "type": "MISSING_CONTROLLER",
+      "route": "mobileRoutes.js",
+      "endpoint": "PUT /conversations/:conversationId/status",
+      "controller": "mobileSubscriptionController",
+      "severity": "HIGH",
+      "message": "Controller mobileSubscriptionController does not exist"
+    },
+    {
+      "type": "MISSING_CONTROLLER",
+      "route": "mobileRoutes.js",
+      "endpoint": "GET /message-templates",
+      "controller": "mobileSubscriptionController",
+      "severity": "HIGH",
+      "message": "Controller mobileSubscriptionController does not exist"
+    },
+    {
+      "type": "MISSING_CONTROLLER",
+      "route": "mobileRoutes.js",
+      "endpoint": "POST /message-templates",
+      "controller": "mobileSubscriptionController",
+      "severity": "HIGH",
+      "message": "Controller mobileSubscriptionController does not exist"
+    },
+    {
+      "type": "MISSING_CONTROLLER",
+      "route": "mobileRoutes.js",
+      "endpoint": "PUT /message-templates/:templateId",
+      "controller": "mobileSubscriptionController",
+      "severity": "HIGH",
+      "message": "Controller mobileSubscriptionController does not exist"
+    },
+    {
+      "type": "MISSING_CONTROLLER",
+      "route": "mobileRoutes.js",
+      "endpoint": "DELETE /message-templates/:templateId",
+      "controller": "mobileSubscriptionController",
+      "severity": "HIGH",
+      "message": "Controller mobileSubscriptionController does not exist"
+    },
+    {
+      "type": "MISSING_CONTROLLER",
+      "route": "mobileRoutes.js",
+      "endpoint": "GET /leads",
+      "controller": "mobileSubscriptionController",
+      "severity": "HIGH",
+      "message": "Controller mobileSubscriptionController does not exist"
+    },
+    {
+      "type": "MISSING_CONTROLLER",
+      "route": "mobileRoutes.js",
+      "endpoint": "GET /leads/:id",
+      "controller": "mobileSubscriptionController",
+      "severity": "HIGH",
+      "message": "Controller mobileSubscriptionController does not exist"
+    },
+    {
+      "type": "MISSING_CONTROLLER",
+      "route": "mobileRoutes.js",
+      "endpoint": "PUT /leads/:id/accept",
+      "controller": "mobileSubscriptionController",
+      "severity": "HIGH",
+      "message": "Controller mobileSubscriptionController does not exist"
+    },
+    {
+      "type": "MISSING_CONTROLLER",
+      "route": "mobileRoutes.js",
+      "endpoint": "PUT /leads/:id/reject",
+      "controller": "mobileSubscriptionController",
+      "severity": "HIGH",
+      "message": "Controller mobileSubscriptionController does not exist"
+    },
+    {
+      "type": "MISSING_CONTROLLER",
+      "route": "mobileRoutes.js",
+      "endpoint": "PUT /leads/:id/status",
+      "controller": "mobileSubscriptionController",
+      "severity": "HIGH",
+      "message": "Controller mobileSubscriptionController does not exist"
+    },
+    {
+      "type": "MISSING_CONTROLLER",
+      "route": "mobileRoutes.js",
+      "endpoint": "PUT /leads/:id/view",
+      "controller": "mobileSubscriptionController",
+      "severity": "HIGH",
+      "message": "Controller mobileSubscriptionController does not exist"
+    },
+    {
+      "type": "MISSING_CONTROLLER",
+      "route": "mobileRoutes.js",
+      "endpoint": "POST /leads/:id/call",
+      "controller": "mobileSubscriptionController",
+      "severity": "HIGH",
+      "message": "Controller mobileSubscriptionController does not exist"
+    },
+    {
+      "type": "MISSING_CONTROLLER",
+      "route": "mobileRoutes.js",
+      "endpoint": "POST /leads/:id/notes",
+      "controller": "mobileSubscriptionController",
+      "severity": "HIGH",
+      "message": "Controller mobileSubscriptionController does not exist"
+    },
+    {
+      "type": "MISSING_CONTROLLER",
+      "route": "mobileRoutes.js",
+      "endpoint": "POST /auth/register-device",
+      "controller": "mobileSubscriptionController",
+      "severity": "HIGH",
+      "message": "Controller mobileSubscriptionController does not exist"
+    },
+    {
+      "type": "MISSING_CONTROLLER",
+      "route": "mobileRoutes.js",
+      "endpoint": "PUT /auth/update-device",
+      "controller": "mobileSubscriptionController",
+      "severity": "HIGH",
+      "message": "Controller mobileSubscriptionController does not exist"
+    },
+    {
+      "type": "MISSING_CONTROLLER",
+      "route": "mobileRoutes.js",
+      "endpoint": "DELETE /auth/unregister-device",
+      "controller": "mobileSubscriptionController",
+      "severity": "HIGH",
+      "message": "Controller mobileSubscriptionController does not exist"
+    },
+    {
+      "type": "MISSING_CONTROLLER",
+      "route": "mobileRoutes.js",
+      "endpoint": "GET /notifications/settings",
+      "controller": "mobileSubscriptionController",
+      "severity": "HIGH",
+      "message": "Controller mobileSubscriptionController does not exist"
+    },
+    {
+      "type": "MISSING_CONTROLLER",
+      "route": "mobileRoutes.js",
+      "endpoint": "PUT /notifications/settings",
+      "controller": "mobileSubscriptionController",
+      "severity": "HIGH",
+      "message": "Controller mobileSubscriptionController does not exist"
+    },
+    {
+      "type": "MISSING_CONTROLLER",
+      "route": "mobileRoutes.js",
+      "endpoint": "POST /auth/upload-document",
+      "controller": "mobileSubscriptionController",
+      "severity": "HIGH",
+      "message": "Controller mobileSubscriptionController does not exist"
+    },
+    {
+      "type": "MISSING_CONTROLLER",
+      "route": "mobileRoutes.js",
+      "endpoint": "GET /auth/verification-status",
+      "controller": "mobileSubscriptionController",
+      "severity": "HIGH",
+      "message": "Controller mobileSubscriptionController does not exist"
+    },
+    {
+      "type": "MISSING_CONTROLLER",
+      "route": "mobileRoutes.js",
+      "endpoint": "GET /auth/documents",
+      "controller": "mobileSubscriptionController",
+      "severity": "HIGH",
+      "message": "Controller mobileSubscriptionController does not exist"
+    },
+    {
+      "type": "UNREGISTERED_ROUTE",
+      "route": "mobileRoutes.js",
+      "severity": "HIGH",
+      "message": "Route file mobileRoutes.js is not registered in server.js"
+    },
+    {
+      "type": "UNREGISTERED_ROUTE",
+      "route": "mobileSubscriptionPurchaseRoutes.js",
+      "severity": "HIGH",
+      "message": "Route file mobileSubscriptionPurchaseRoutes.js is not registered in server.js"
+    },
+    {
+      "type": "UNREGISTERED_ROUTE",
+      "route": "subscriptionManagementRoutes.js",
+      "severity": "HIGH",
+      "message": "Route file subscriptionManagementRoutes.js is not registered in server.js"
+    },
+    {
+      "type": "UNREGISTERED_ROUTE",
+      "route": "subscriptionRoutes.js",
+      "severity": "HIGH",
+      "message": "Route file subscriptionRoutes.js is not registered in server.js"
+    },
+    {
+      "type": "UNREGISTERED_ROUTE",
+      "route": "supabaseSubscriptionPlansRoutes.js",
+      "severity": "HIGH",
+      "message": "Route file supabaseSubscriptionPlansRoutes.js is not registered in server.js"
+    }
+  ],
+  "summary": {
+    "totalRoutes": 52,
+    "connectedRoutes": 0,
+    "missingConnections": 52,
+    "brokenConnections": 0
+  }
+}

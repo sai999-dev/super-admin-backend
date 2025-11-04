@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const supabase = require('../config/supabaseClient');
+const { authenticateAdmin } = require('../middleware/adminAuth');
 
 /**
  * ROLES MANAGEMENT ROUTES
@@ -8,6 +9,9 @@ const supabase = require('../config/supabaseClient');
  * Finance Manager: Access to Financial, Subscriptions, Agencies
  * Operations Manager: Access to Dashboard, Integrations, Portal Registry
  */
+
+// Apply authentication to all routes
+router.use(authenticateAdmin);
 
 // GET /api/admin/roles - List all roles
 router.get('/roles', async (req, res) => {

@@ -3,15 +3,15 @@
  * API endpoints for lead distribution management
  */
 
-import express from 'express';
-import {
+const express = require('express');
+const {
   distributeLeadManually,
   batchDistributeLeads,
   getDistributionStats,
   testDistributionEligibility,
   reassignLead
-} from '../controllers/leadDistributionController.js';
-import { authenticateAdmin } from '../middleware/adminAuth.js';
+} = require('../controllers/leadDistributionController');
+const { authenticateAdmin } = require('../middleware/adminAuth');
 
 const router = express.Router();
 
@@ -19,19 +19,19 @@ const router = express.Router();
 router.use(authenticateAdmin);
 
 /**
- * @route   POST /api/admin/leads/:leadId/distribute
+ * @route   POST /api/admin/leads/distribution/:leadId
  * @desc    Manually trigger distribution for a specific lead
  * @access  Admin
  */
-router.post('/:leadId/distribute', distributeLeadManually);
+router.post('/distribution/:leadId', distributeLeadManually);
 
 /**
- * @route   POST /api/admin/leads/batch-distribute
+ * @route   POST /api/admin/leads/distribution/batch
  * @desc    Batch distribute multiple unassigned leads
  * @access  Admin
  * @body    { limit: number } - Optional, default 50
  */
-router.post('/batch-distribute', batchDistributeLeads);
+router.post('/distribution/batch', batchDistributeLeads);
 
 /**
  * @route   GET /api/admin/leads/distribution/stats
@@ -42,18 +42,18 @@ router.post('/batch-distribute', batchDistributeLeads);
 router.get('/distribution/stats', getDistributionStats);
 
 /**
- * @route   GET /api/admin/leads/:leadId/eligibility
+ * @route   GET /api/admin/leads/distribution/:leadId/eligibility
  * @desc    Test which agencies are eligible for a lead
  * @access  Admin
  */
-router.get('/:leadId/eligibility', testDistributionEligibility);
+router.get('/distribution/:leadId/eligibility', testDistributionEligibility);
 
 /**
- * @route   PUT /api/admin/leads/:leadId/reassign
+ * @route   PUT /api/admin/leads/distribution/:leadId/reassign
  * @desc    Reassign lead to different agency
  * @access  Admin
  * @body    { agencyId: string }
  */
-router.put('/:leadId/reassign', reassignLead);
+router.put('/distribution/:leadId/reassign', reassignLead);
 
-export default router;
+module.exports = router;

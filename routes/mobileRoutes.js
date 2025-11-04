@@ -13,6 +13,7 @@ const mobileTerritoryController = require('../controllers/mobileTerritoryControl
 const mobileLeadsController = require('../controllers/mobileLeadsController');
 const mobileDeviceController = require('../controllers/mobileDeviceController');
 const mobileNotificationController = require('../controllers/mobileNotificationController');
+const mobileAnalyticsController = require('../controllers/mobileAnalyticsController');
 let mobileMessagingController = null;
 try {
   if (ENABLE_MESSAGING) {
@@ -261,33 +262,14 @@ if (mobileMessagingController) {
  * @desc Track mobile app events
  * @access Private (Agency)
  */
-router.post('/analytics/event', (req, res) => {
-  // TODO: Implement mobile analytics tracking
-  res.status(200).json({
-    success: true,
-    message: 'Analytics event tracked successfully'
-  });
-});
+router.post('/analytics/event', mobileAnalyticsController.trackEvent);
 
 /**
  * @route GET /api/mobile/analytics/performance
  * @desc Get mobile performance metrics
  * @access Private (Agency)
  */
-router.get('/analytics/performance', (req, res) => {
-  // TODO: Implement mobile performance metrics
-  res.status(200).json({
-    success: true,
-    data: {
-      performance: {
-        leadsViewed: 0,
-        leadsPurchased: 0,
-        messagesSent: 0,
-        conversionRate: 0
-      }
-    }
-  });
-});
+router.get('/analytics/performance', mobileAnalyticsController.getPerformanceMetrics);
 
 // =====================================================
 // MOBILE LEAD MANAGEMENT ROUTES

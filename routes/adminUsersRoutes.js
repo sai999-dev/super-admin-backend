@@ -2,12 +2,16 @@ const express = require('express');
 const router = express.Router();
 const supabase = require('../config/supabaseClient');
 const bcrypt = require('bcryptjs');
+const { authenticateAdmin } = require('../middleware/adminAuth');
 
 /**
  * USER MANAGEMENT ROUTES - SUPER ADMIN PORTAL
  * Connects to: frontend/scripts/app.js - renderUsersTable()
  * Database: Supabase users table
  */
+
+// Apply authentication to all routes
+router.use(authenticateAdmin);
 
 // GET /api/admin/users - List all users with pagination and filters
 router.get('/users', async (req, res) => {

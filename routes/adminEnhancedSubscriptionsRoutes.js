@@ -395,23 +395,71 @@ router.delete('/subscriptions/plans/bulk-delete', async (req, res) => {
       }
 
       if (force && (count || 0) > 0) {
-        // Force cancel and cleanup similar to single delete
-        const { data: subsToCancel } = await supabase
+        // Get ALL subscriptions (any status) for this plan
+        const { data: allSubsForPlan, error: subsErr } = await supabase
           .from('subscriptions')
           .select('id')
-          .eq('plan_id', planId)
-          .in('status', statuses);
-        if (Array.isArray(subsToCancel) && subsToCancel.length) {
-          const ids = subsToCancel.map(s => s.id);
-          await supabase
-            .from('subscriptions')
-            .update({ status: 'cancelled', updated_at: new Date().toISOString() })
-            .in('id', ids);
+          .eq('plan_id', planId);
+        
+        if (subsErr) {
+          console.error(`Error fetching subscriptions for plan ${planId}:`, subsErr.message);
+          skipped.push({ id: planId, name: p.name || p.plan_name, error: `Failed to fetch subscriptions: ${subsErr.message}` });
+          continue;
         }
-        await supabase
+
+        // Delete ALL subscriptions (any status) that reference this plan
+        if (Array.isArray(allSubsForPlan) && allSubsForPlan.length > 0) {
+          const subIds = allSubsForPlan.map(s => s.id);
+          
+          // Try direct delete first
+          const { error: delSubsErr } = await supabase
+            .from('subscriptions')
+            .delete()
+            .in('id', subIds);
+          
+          if (delSubsErr) {
+            // If deletion fails (e.g., due to FK constraints), cancel then delete
+            console.warn(`Direct delete failed for plan ${planId}, trying cancel-then-delete:`, delSubsErr.message);
+            
+            const { error: cancelErr } = await supabase
+              .from('subscriptions')
+              .update({ 
+                status: 'cancelled', 
+                cancelled_at: new Date().toISOString(),
+                updated_at: new Date().toISOString() 
+              })
+              .in('id', subIds);
+            
+            if (cancelErr) {
+              console.error(`Failed to cancel subscriptions for plan ${planId}:`, cancelErr.message);
+              skipped.push({ id: planId, name: p.name || p.plan_name, error: `Failed to cancel subscriptions: ${cancelErr.message}` });
+              continue;
+            }
+            
+            // Retry deletion after cancelling
+            const { error: retryDelErr } = await supabase
+              .from('subscriptions')
+              .delete()
+              .in('id', subIds);
+            
+            if (retryDelErr) {
+              console.error(`Failed to delete cancelled subscriptions for plan ${planId}:`, retryDelErr.message);
+              skipped.push({ id: planId, name: p.name || p.plan_name, error: `Failed to delete subscriptions: ${retryDelErr.message}` });
+              continue;
+            }
+          }
+        }
+        
+        // Remove agency_subscriptions rows referencing the plan
+        const { error: delAgencySubsErr } = await supabase
           .from('agency_subscriptions')
           .delete()
           .eq('plan_id', planId);
+        
+        if (delAgencySubsErr) {
+          console.warn(`Error deleting agency_subscriptions for plan ${planId}:`, delAgencySubsErr.message);
+          // Continue anyway - main subscriptions are deleted
+        }
       }
 
       const { error: delErr } = await supabase
@@ -488,45 +536,18 @@ router.delete('/subscriptions/plans/:id', async (req, res) => {
     // If force=true, delete ALL subscriptions referencing this plan (not just active)
     let affected = { deletedSubscriptions: 0, removedAgencySubs: 0 };
     if (force && totalCount > 0) {
-      // Delete ALL subscriptions (any status) that reference this plan
       const subscriptionIds = (allSubscriptions || []).map(s => s.id);
-      if (subscriptionIds.length > 0) {
-        const { error: delSubsErr } = await supabase
-          .from('subscriptions')
-          .delete()
-          .in('id', subscriptionIds);
-        if (delSubsErr) {
-          console.error('Error deleting subscriptions:', delSubsErr.message);
-          // If deletion fails due to FK constraints, try cancelling first then deleting
-          const { error: cancelErr } = await supabase
-            .from('subscriptions')
-            .update({ 
-              status: 'cancelled', 
-              cancelled_at: new Date().toISOString(),
-              updated_at: new Date().toISOString() 
-            })
-            .in('id', subscriptionIds);
-          if (cancelErr) {
-            throw new Error(`Failed to delete subscriptions: ${delSubsErr.message}`);
-          }
-          // Retry deletion after cancelling
-          const { error: retryErr } = await supabase
-            .from('subscriptions')
-            .delete()
-            .in('id', subscriptionIds);
-          if (retryErr) {
-            throw new Error(`Failed to delete cancelled subscriptions: ${retryErr.message}`);
-          }
-        }
-        affected.deletedSubscriptions = subscriptionIds.length;
-      }
       
-      // Remove agency_subscriptions rows referencing the plan
-      const { data: agencySubs } = await supabase
+      // Step 1: Delete agency_subscriptions FIRST (since they reference subscriptions)
+      // This prevents any issues with SET NULL operations
+      const { data: agencySubs, error: agencySubsErr } = await supabase
         .from('agency_subscriptions')
-        .select('id')
+        .select('id, subscription_id')
         .eq('plan_id', id);
-      if (Array.isArray(agencySubs) && agencySubs.length > 0) {
+      
+      if (agencySubsErr) {
+        console.warn('Error fetching agency_subscriptions:', agencySubsErr.message);
+      } else if (Array.isArray(agencySubs) && agencySubs.length > 0) {
         const agencySubIds = agencySubs.map(s => s.id);
         const { error: delASErr } = await supabase
           .from('agency_subscriptions')
@@ -534,10 +555,72 @@ router.delete('/subscriptions/plans/:id', async (req, res) => {
           .in('id', agencySubIds);
         if (delASErr) {
           console.warn('Force-delete agency_subscriptions error:', delASErr.message);
-          // Continue even if this fails - main subscriptions are deleted
         } else {
           affected.removedAgencySubs = agencySubIds.length;
         }
+      }
+      
+      // Step 2: Delete ALL subscriptions (any status) that reference this plan
+      if (subscriptionIds.length > 0) {
+        // First, ensure subscriptions are cancelled (helps with any business logic)
+        const { error: cancelErr } = await supabase
+          .from('subscriptions')
+          .update({ 
+            status: 'cancelled', 
+            cancelled_at: new Date().toISOString(),
+            updated_at: new Date().toISOString() 
+          })
+          .in('id', subscriptionIds)
+          .neq('status', 'cancelled'); // Only update if not already cancelled
+        
+        if (cancelErr) {
+          console.warn('Error cancelling subscriptions before delete:', cancelErr.message);
+          // Continue anyway - try to delete
+        }
+        
+        // Now delete subscriptions
+        const { error: delSubsErr } = await supabase
+          .from('subscriptions')
+          .delete()
+          .in('id', subscriptionIds);
+        
+        if (delSubsErr) {
+          const errorMsg = (delSubsErr.message || '').toLowerCase();
+          
+          // If it's a foreign key constraint error, we need to check what's blocking
+          if (/foreign key|constraint|violates/i.test(errorMsg)) {
+            // Check if there are still dependencies
+            const { data: billingCheck } = await supabase
+              .from('billing_history')
+              .select('id')
+              .in('subscription_id', subscriptionIds)
+              .limit(1);
+            
+            if (billingCheck && billingCheck.length > 0) {
+              // Billing history should cascade, but let's delete it manually just in case
+              await supabase
+                .from('billing_history')
+                .delete()
+                .in('subscription_id', subscriptionIds);
+              
+              // Retry subscription deletion
+              const { error: retryErr } = await supabase
+                .from('subscriptions')
+                .delete()
+                .in('id', subscriptionIds);
+              
+              if (retryErr) {
+                throw new Error(`Failed to delete subscriptions after cleaning dependencies: ${retryErr.message}`);
+              }
+            } else {
+              throw new Error(`Failed to delete subscriptions: ${delSubsErr.message}`);
+            }
+          } else {
+            throw new Error(`Failed to delete subscriptions: ${delSubsErr.message}`);
+          }
+        }
+        
+        affected.deletedSubscriptions = subscriptionIds.length;
       }
     }
 

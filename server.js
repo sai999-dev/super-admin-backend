@@ -17,6 +17,8 @@ const path = require('path');
 const fs = require('fs');
 const { performanceMonitor, errorTracker, getHealthData } = require('./middleware/observability');
 
+// Import services for webhook processing (moved to webhook handler to avoid circular dependencies)
+
 // Load environment variables from config.env (try multiple locations)
 dotenv.config({ path: path.join(__dirname, 'config.env') });
 dotenv.config({ path: path.join(__dirname, '..', 'config.env') });
@@ -1395,30 +1397,164 @@ app.post("/api/portals", async (req, res) => {
 
 
 app.post('/api/webhooks/:portal_code', async (req, res) => {
+  // Import services dynamically to avoid circular dependencies
+  const leadIngestionService = require('./services/leadIngestionService');
+  const leadDistributionService = require('./services/leadDistributionService');
+  const auditService = require('./services/auditService');
+
   const { portal_code } = req.params;
   const apiKey = req.headers['x-api-key'];
+  const startTime = Date.now();
 
-  if (!apiKey) return res.status(401).json({ success: false, message: 'Missing API key' });
+  try {
+    // Step 1: Authenticate webhook (00:00.150)
+    if (!apiKey) {
+      await auditService.logWebhook(null, portal_code, req.body, 'failed', 'Missing API key');
+      return res.status(401).json({ success: false, message: 'Missing API key' });
+    }
 
-  const { data: portal, error } = await supabase
-    .from('portals')
-    .select('id')
-    .eq('portal_code', portal_code)
-    .eq('api_key', apiKey)
-    .single();
+    const { data: portal, error: portalError } = await supabase
+      .from('portals')
+      .select('id, portal_name, industry, portal_status')
+      .eq('portal_code', portal_code)
+      .eq('api_key', apiKey)
+      .single();
 
-  if (error || !portal)
-    return res.status(403).json({ success: false, message: 'Invalid API key or portal' });
+    if (portalError || !portal) {
+      await auditService.logWebhook(null, portal_code, req.body, 'failed', 'Invalid API key or portal');
+      return res.status(403).json({ success: false, message: 'Invalid API key or portal' });
+    }
 
-  // Save lead payload
-  const { error: insertError } = await supabase
-    .from('leads')
-    .insert([{ portal_id: portal.id, payload: req.body }]);
+    if (portal.portal_status !== 'active') {
+      await auditService.logWebhook(portal.id, portal_code, req.body, 'failed', 'Portal is not active');
+      return res.status(403).json({ success: false, message: 'Portal is not active' });
+    }
 
-  if (insertError)
-    return res.status(500).json({ success: false, message: insertError.message });
+    // Step 2: Log webhook reception (00:00.200)
+    await auditService.logWebhook(portal.id, portal_code, req.body, 'success', 'Webhook received');
 
-  res.status(200).json({ success: true, message: 'Lead received successfully' });
+    // Step 3: Transform data (00:00.300)
+    const transformedData = leadIngestionService.transformData(req.body, portal);
+
+    // Step 4: Validate (00:00.350)
+    const validation = leadIngestionService.validate(transformedData);
+
+    if (!validation.valid) {
+      await auditService.log({
+        action: 'lead_validation_failed',
+        resource_type: 'lead',
+        resource_id: null,
+        metadata: { portal_id: portal.id, errors: validation.errors },
+        status: 'failed',
+        message: 'Lead validation failed'
+      });
+      return res.status(400).json({
+        success: false,
+        message: 'Lead validation failed',
+        errors: validation.errors
+      });
+    }
+
+    // Step 5: Process lead ingestion (create lead) (00:00.450)
+    const leadResult = await leadIngestionService.processLead(req.body, portal);
+
+    if (!leadResult.success) {
+      await auditService.log({
+        action: 'lead_creation_failed',
+        resource_type: 'lead',
+        resource_id: null,
+        metadata: { portal_id: portal.id, reason: leadResult.message },
+        status: 'failed'
+      });
+      return res.status(400).json({
+        success: false,
+        message: leadResult.message,
+        errors: leadResult.errors || []
+      });
+    }
+
+    const leadId = leadResult.lead_id;
+
+    // Log lead creation
+    await auditService.logLeadCreation(leadId, portal.id, transformedData);
+
+    // Step 6: Automatically distribute lead (00:00.550-00:00.650)
+    // Get the created lead for distribution
+    const { data: createdLead, error: leadFetchError } = await supabase
+      .from('leads')
+      .select('*')
+      .eq('id', leadId)
+      .single();
+
+    if (!leadFetchError && createdLead) {
+      // Trigger automatic distribution
+      const distributionResult = await leadDistributionService.distributeLead(createdLead);
+
+      if (distributionResult.success) {
+        // Log assignment
+        await auditService.logLeadAssignment(
+          leadId,
+          distributionResult.agency_id,
+          distributionResult.assignment_id
+        );
+
+        // Notification already sent by leadDistributionService during distribution
+        // No additional notification needed here
+
+        const processingTime = Date.now() - startTime;
+        return res.status(200).json({
+          success: true,
+          message: 'Lead received and distributed successfully',
+          data: {
+            lead_id: leadId,
+            assigned_to_agency: distributionResult.agency_id,
+            assignment_id: distributionResult.assignment_id,
+            processing_time_ms: processingTime
+          }
+        });
+      } else {
+        // Lead created but not distributed (no eligible agencies)
+        const processingTime = Date.now() - startTime;
+        return res.status(200).json({
+          success: true,
+          message: 'Lead received successfully but not yet assigned',
+          warning: distributionResult.message,
+          data: {
+            lead_id: leadId,
+            processing_time_ms: processingTime
+          }
+        });
+      }
+    }
+
+    // Lead created but distribution failed or lead not found
+    const processingTime = Date.now() - startTime;
+    return res.status(200).json({
+      success: true,
+      message: 'Lead received successfully',
+      data: {
+        lead_id: leadId,
+        processing_time_ms: processingTime
+      }
+    });
+
+  } catch (error) {
+    console.error('❌ Webhook processing error:', error);
+    await auditService.log({
+      action: 'webhook_processing_error',
+      resource_type: 'webhook',
+      resource_id: null,
+      metadata: { portal_code, error: error.message },
+      status: 'failed',
+      message: error.message
+    });
+
+    return res.status(500).json({
+      success: false,
+      message: 'Internal server error processing webhook',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
 });
 
 
@@ -1663,6 +1799,7 @@ const adminLeadsRoutes = require('./routes/adminLeadsRoutes');
 const adminDocumentVerificationRoutes = require('./routes/adminDocumentVerificationRoutes');
 const adminPortalsRoutes = require('./routes/adminPortalsRoutes');
 const adminWebhooksRoutes = require('./routes/adminWebhooksRoutes');
+const leadDistributionRoutes = require('./routes/leadDistributionRoutes');
 
 // Apply mobile auth routes (PUBLIC - no authentication required)
 app.use('/api/v1/agencies', mobileAuthRoutes);
@@ -1695,6 +1832,7 @@ app.use('/api/admin', adminLeadsRoutes);
 app.use('/api/admin', adminDocumentVerificationRoutes);
 app.use('/api/admin', adminPortalsRoutes);
 app.use('/api/admin', adminWebhooksRoutes);
+app.use('/api/admin/leads', leadDistributionRoutes);
 
 // Apply metrics/observability routes
 const metricsRoutes = require('./routes/metricsRoutes');
@@ -1744,16 +1882,14 @@ app.use((req, res, next) => {
 // Global error handler (with observability tracking)
 app.use(errorTracker);
 
-// Fallback error handler
-app.use((error, req, res, next) => {
-  console.error('Global error handler:', error);
-  
-  res.status(error.status || 500).json({
-    success: false,
-    message: error.message || 'Internal server error',
-    ...(NODE_ENV === 'development' && { stack: error.stack })
-  });
-});
+// Import standardized error handler
+const ErrorHandler = require('./middleware/errorHandler');
+
+// Use standardized error handler (after observability tracking)
+app.use(ErrorHandler.handle);
+
+// 404 handler for routes not matching any endpoint
+app.use(ErrorHandler.notFound);
 
 // =====================================================
 // SERVER STARTUP

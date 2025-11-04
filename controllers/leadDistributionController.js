@@ -3,13 +3,14 @@
  * Handles HTTP requests for lead distribution operations
  */
 
-import leadDistributionService from '../services/leadDistributionService.js';
-import { supabase } from '../config/supabaseClient.js';
+const leadDistributionService = require('../services/leadDistributionService');
+const supabase = require('../config/supabaseClient');
+const logger = require('../utils/logger');
 
 /**
  * Manually trigger lead distribution for a specific lead
  */
-export const distributeLeadManually = async (req, res) => {
+async function distributeLeadManually(req, res) {
   try {
     const { leadId } = req.params;
 
@@ -53,19 +54,19 @@ export const distributeLeadManually = async (req, res) => {
     }
 
   } catch (error) {
-    console.error('Error in distributeLeadManually:', error);
+    logger.error('Error in distributeLeadManually:', error);
     return res.status(500).json({
       success: false,
       message: 'Internal server error',
-      error: error.message
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
-};
+}
 
 /**
  * Batch distribute multiple unassigned leads
  */
-export const batchDistributeLeads = async (req, res) => {
+async function batchDistributeLeads(req, res) {
   try {
     const { limit = 50 } = req.body;
 
@@ -103,19 +104,19 @@ export const batchDistributeLeads = async (req, res) => {
     });
 
   } catch (error) {
-    console.error('Error in batchDistributeLeads:', error);
+    logger.error('Error in batchDistributeLeads:', error);
     return res.status(500).json({
       success: false,
       message: 'Internal server error',
-      error: error.message
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
-};
+}
 
 /**
  * Get distribution statistics
  */
-export const getDistributionStats = async (req, res) => {
+async function getDistributionStats(req, res) {
   try {
     const { territory } = req.query;
 
@@ -127,19 +128,19 @@ export const getDistributionStats = async (req, res) => {
     });
 
   } catch (error) {
-    console.error('Error in getDistributionStats:', error);
+    logger.error('Error in getDistributionStats:', error);
     return res.status(500).json({
       success: false,
       message: 'Internal server error',
-      error: error.message
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
-};
+}
 
 /**
  * Test distribution eligibility for a lead
  */
-export const testDistributionEligibility = async (req, res) => {
+async function testDistributionEligibility(req, res) {
   try {
     const { leadId } = req.params;
 
@@ -159,8 +160,8 @@ export const testDistributionEligibility = async (req, res) => {
 
     // Find eligible agencies (without actually assigning)
     const eligibleAgencies = await leadDistributionService.findEligibleAgencies(
-      lead.territory || lead.zipcode,
-      lead.industry_type
+      lead.territory || lead.zipcode || lead.zip_code,
+      lead.industry_type || lead.industry
     );
 
     // Check capacity
@@ -172,8 +173,8 @@ export const testDistributionEligibility = async (req, res) => {
       success: true,
       data: {
         lead_id: lead.id,
-        territory: lead.territory || lead.zipcode,
-        industry: lead.industry_type,
+        territory: lead.territory || lead.zipcode || lead.zip_code,
+        industry: lead.industry_type || lead.industry,
         eligible_agencies: eligibleAgencies.length,
         agencies_with_capacity: agenciesWithCapacity.length,
         agencies: agenciesWithCapacity.map(a => ({
@@ -188,19 +189,19 @@ export const testDistributionEligibility = async (req, res) => {
     });
 
   } catch (error) {
-    console.error('Error in testDistributionEligibility:', error);
+    logger.error('Error in testDistributionEligibility:', error);
     return res.status(500).json({
       success: false,
       message: 'Internal server error',
-      error: error.message
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
-};
+}
 
 /**
  * Reassign lead to different agency
  */
-export const reassignLead = async (req, res) => {
+async function reassignLead(req, res) {
   try {
     const { leadId } = req.params;
     const { agencyId } = req.body;
@@ -245,11 +246,19 @@ export const reassignLead = async (req, res) => {
     });
 
   } catch (error) {
-    console.error('Error in reassignLead:', error);
+    logger.error('Error in reassignLead:', error);
     return res.status(500).json({
       success: false,
       message: 'Internal server error',
-      error: error.message
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
+}
+
+module.exports = {
+  distributeLeadManually,
+  batchDistributeLeads,
+  getDistributionStats,
+  testDistributionEligibility,
+  reassignLead
 };

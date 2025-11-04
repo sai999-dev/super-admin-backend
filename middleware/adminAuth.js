@@ -5,8 +5,15 @@
 
 const jwt = require('jsonwebtoken');
 
-const JWT_SECRET = process.env.JWT_SECRET || 'your-super-secret-jwt-key-change-in-production';
-const JWT_ADMIN_SECRET = process.env.JWT_ADMIN_SECRET || 'your-admin-secret-key-change-in-production';
+// Validate JWT secrets in production
+const NODE_ENV = process.env.NODE_ENV || 'development';
+const JWT_SECRET = process.env.JWT_SECRET || (NODE_ENV === 'production' ? null : 'your-super-secret-jwt-key-change-in-production');
+const JWT_ADMIN_SECRET = process.env.JWT_ADMIN_SECRET || (NODE_ENV === 'production' ? null : 'your-admin-secret-key-change-in-production');
+
+if (NODE_ENV === 'production' && (!JWT_SECRET || !JWT_ADMIN_SECRET)) {
+  console.error('❌ CRITICAL: JWT_SECRET and JWT_ADMIN_SECRET must be set in production!');
+  process.exit(1);
+}
 
 /**
  * Middleware to authenticate admin users

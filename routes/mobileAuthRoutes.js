@@ -694,9 +694,15 @@ router.post('/forgot-password', async (req, res) => {
       created_at: new Date().toISOString()
     });
 
-    // TODO: Send email with reset link
-    // const resetLink = `${process.env.FRONTEND_URL}/reset-password?token=${resetToken}`;
-    // await sendPasswordResetEmail(normalizedEmail, resetLink, agencyRow.agency_name || agencyRow.business_name);
+    // Send email with reset link
+    try {
+      const emailService = require('../services/emailService');
+      await emailService.sendPasswordResetEmail(normalizedEmail, resetToken);
+      console.log('Password reset email sent to:', normalizedEmail);
+    } catch (emailError) {
+      // Log but don't fail - email is non-critical
+      console.warn('Failed to send password reset email (non-critical):', emailError.message);
+    }
 
     console.log('Password reset token generated for:', normalizedEmail, 'Token:', resetToken);
 

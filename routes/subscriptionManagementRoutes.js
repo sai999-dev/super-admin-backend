@@ -7,24 +7,11 @@ const express = require('express');
 const supabase = require('../config/supabaseClient');
 const router = express.Router();
 
-// JWT Authentication Middleware
-const authenticateToken = (req, res, next) => {
-  const authHeader = req.headers['authorization'];
-  const token = authHeader && authHeader.split(' ')[1];
-
-  // For development, allow requests without token or with any token
-  if (!token) {
-    console.log('⚠️ No authorization token provided, allowing for development');
-  }
-
-  // For now, we'll accept any token (in production, verify JWT properly)
-  // TODO: Implement proper JWT verification
-  req.user = { id: 'admin', role: 'super_admin' };
-  next();
-};
+// Use admin authentication middleware
+const { authenticateAdmin } = require('../middleware/adminAuth');
 
 // Apply authentication to all routes
-router.use(authenticateToken);
+router.use(authenticateAdmin);
 
 /**
  * GET /api/subscriptions/active

@@ -1,0 +1,312 @@
+{
+  "timestamp": "2025-11-03T16:49:25.866Z",
+  "totalRoutes": 21,
+  "totalConnections": 21,
+  "issues": [
+    {
+      "type": "MISSING_CONTROLLER",
+      "file": "adminDocumentVerificationRoutes.js",
+      "controller": "documentVerificationController",
+      "severity": "HIGH",
+      "message": "Controller documentVerificationController referenced in adminDocumentVerificationRoutes.js does not exist"
+    },
+    {
+      "type": "MISSING_CONTROLLER",
+      "file": "adminLeadsRoutes.js",
+      "controller": "adminLeadsController",
+      "severity": "HIGH",
+      "message": "Controller adminLeadsController referenced in adminLeadsRoutes.js does not exist"
+    },
+    {
+      "type": "MISSING_SERVICE",
+      "file": "adminRoutes.js",
+      "service": "adminActivityService",
+      "severity": "MEDIUM",
+      "message": "Service adminActivityService referenced in adminRoutes.js does not exist"
+    },
+    {
+      "type": "MISSING_SERVICE",
+      "file": "adminRoutes.js",
+      "service": "adminActivityService",
+      "severity": "MEDIUM",
+      "message": "Service adminActivityService referenced in adminRoutes.js does not exist"
+    },
+    {
+      "type": "UNREGISTERED_ROUTE",
+      "file": "agencyRoutes.js",
+      "severity": "HIGH",
+      "message": "Route file agencyRoutes.js is not registered in server.js"
+    },
+    {
+      "type": "MISSING_CONTROLLER",
+      "file": "agencyRoutes.js",
+      "controller": "agencyController",
+      "severity": "HIGH",
+      "message": "Controller agencyController referenced in agencyRoutes.js does not exist"
+    },
+    {
+      "type": "MISSING_CONTROLLER",
+      "file": "leadDistributionRoutes.js",
+      "controller": "leadDistributionController",
+      "severity": "HIGH",
+      "message": "Controller leadDistributionController referenced in leadDistributionRoutes.js does not exist"
+    },
+    {
+      "type": "MISSING_CONTROLLER",
+      "file": "mobileRoutes.js",
+      "controller": "mobileSubscriptionController",
+      "severity": "HIGH",
+      "message": "Controller mobileSubscriptionController referenced in mobileRoutes.js does not exist"
+    },
+    {
+      "type": "MISSING_CONTROLLER",
+      "file": "mobileRoutes.js",
+      "controller": "mobileTerritoryController",
+      "severity": "HIGH",
+      "message": "Controller mobileTerritoryController referenced in mobileRoutes.js does not exist"
+    },
+    {
+      "type": "MISSING_CONTROLLER",
+      "file": "mobileRoutes.js",
+      "controller": "mobileLeadsController",
+      "severity": "HIGH",
+      "message": "Controller mobileLeadsController referenced in mobileRoutes.js does not exist"
+    },
+    {
+      "type": "MISSING_CONTROLLER",
+      "file": "mobileRoutes.js",
+      "controller": "mobileDeviceController",
+      "severity": "HIGH",
+      "message": "Controller mobileDeviceController referenced in mobileRoutes.js does not exist"
+    },
+    {
+      "type": "MISSING_CONTROLLER",
+      "file": "mobileRoutes.js",
+      "controller": "mobileNotificationController",
+      "severity": "HIGH",
+      "message": "Controller mobileNotificationController referenced in mobileRoutes.js does not exist"
+    },
+    {
+      "type": "MISSING_CONTROLLER",
+      "file": "mobileRoutes.js",
+      "controller": "mobileMessagingController",
+      "severity": "HIGH",
+      "message": "Controller mobileMessagingController referenced in mobileRoutes.js does not exist"
+    },
+    {
+      "type": "MISSING_CONTROLLER",
+      "file": "mobileRoutes.js",
+      "controller": "documentVerificationController",
+      "severity": "HIGH",
+      "message": "Controller documentVerificationController referenced in mobileRoutes.js does not exist"
+    },
+    {
+      "type": "MISSING_CONTROLLER",
+      "file": "subscriptionRoutes.js",
+      "controller": "subscriptionPlansController",
+      "severity": "HIGH",
+      "message": "Controller subscriptionPlansController referenced in subscriptionRoutes.js does not exist"
+    },
+    {
+      "type": "MISSING_CONTROLLER",
+      "file": "subscriptionRoutes.js",
+      "controller": "subscriptionsController",
+      "severity": "HIGH",
+      "message": "Controller subscriptionsController referenced in subscriptionRoutes.js does not exist"
+    },
+    {
+      "type": "MISSING_CONTROLLER",
+      "file": "subscriptionRoutes.js",
+      "controller": "territoriesController",
+      "severity": "HIGH",
+      "message": "Controller territoriesController referenced in subscriptionRoutes.js does not exist"
+    },
+    {
+      "type": "MISSING_CONTROLLER",
+      "file": "subscriptionRoutes.js",
+      "controller": "billingPaymentsController",
+      "severity": "HIGH",
+      "message": "Controller billingPaymentsController referenced in subscriptionRoutes.js does not exist"
+    },
+    {
+      "type": "MISSING_CONTROLLER",
+      "file": "subscriptionRoutes.js",
+      "controller": "activeSubscriptionsController",
+      "severity": "HIGH",
+      "message": "Controller activeSubscriptionsController referenced in subscriptionRoutes.js does not exist"
+    }
+  ],
+  "connections": [
+    {
+      "routeFile": "adminAgenciesRoutes.js",
+      "isRegistered": true,
+      "controllers": [],
+      "services": [],
+      "routeCount": 0
+    },
+    {
+      "routeFile": "adminAgencySubscriptionsRoutes.js",
+      "isRegistered": true,
+      "controllers": [],
+      "services": [],
+      "routeCount": 0
+    },
+    {
+      "routeFile": "adminDocumentVerificationRoutes.js",
+      "isRegistered": true,
+      "controllers": [
+        "../controllers/documentVerificationController"
+      ],
+      "services": [],
+      "routeCount": 4
+    },
+    {
+      "routeFile": "adminEnhancedSubscriptionsRoutes.js",
+      "isRegistered": true,
+      "controllers": [],
+      "services": [],
+      "routeCount": 0
+    },
+    {
+      "routeFile": "adminFinancialRoutes.js",
+      "isRegistered": true,
+      "controllers": [],
+      "services": [],
+      "routeCount": 0
+    },
+    {
+      "routeFile": "adminLeadsRoutes.js",
+      "isRegistered": true,
+      "controllers": [
+        "../controllers/adminLeadsController"
+      ],
+      "services": [],
+      "routeCount": 1
+    },
+    {
+      "routeFile": "adminPortalsRoutes.js",
+      "isRegistered": true,
+      "controllers": [],
+      "services": [],
+      "routeCount": 0
+    },
+    {
+      "routeFile": "adminRolesRoutes.js",
+      "isRegistered": true,
+      "controllers": [],
+      "services": [],
+      "routeCount": 0
+    },
+    {
+      "routeFile": "adminRoutes.js",
+      "isRegistered": true,
+      "controllers": [],
+      "services": [
+        "../services/adminActivityService"
+      ],
+      "routeCount": 0
+    },
+    {
+      "routeFile": "adminSystemRoutes.js",
+      "isRegistered": true,
+      "controllers": [],
+      "services": [],
+      "routeCount": 0
+    },
+    {
+      "routeFile": "adminUsersRoutes.js",
+      "isRegistered": true,
+      "controllers": [],
+      "services": [],
+      "routeCount": 0
+    },
+    {
+      "routeFile": "adminWebhooksRoutes.js",
+      "isRegistered": true,
+      "controllers": [],
+      "services": [],
+      "routeCount": 0
+    },
+    {
+      "routeFile": "agencyRoutes.js",
+      "isRegistered": false,
+      "controllers": [
+        "../controllers/agencyController"
+      ],
+      "services": [],
+      "routeCount": 0
+    },
+    {
+      "routeFile": "leadDistributionRoutes.js",
+      "isRegistered": true,
+      "controllers": [
+        "../controllers/leadDistributionController"
+      ],
+      "services": [],
+      "routeCount": 5
+    },
+    {
+      "routeFile": "metricsRoutes.js",
+      "isRegistered": true,
+      "controllers": [],
+      "services": [],
+      "routeCount": 0
+    },
+    {
+      "routeFile": "mobileAuthRoutes.js",
+      "isRegistered": true,
+      "controllers": [],
+      "services": [],
+      "routeCount": 0
+    },
+    {
+      "routeFile": "mobileRoutes.js",
+      "isRegistered": true,
+      "controllers": [
+        "../controllers/mobileSubscriptionController",
+        "../controllers/mobileTerritoryController",
+        "../controllers/mobileLeadsController",
+        "../controllers/mobileDeviceController",
+        "../controllers/mobileNotificationController",
+        "../controllers/mobileMessagingController",
+        "../controllers/documentVerificationController"
+      ],
+      "services": [],
+      "routeCount": 42
+    },
+    {
+      "routeFile": "mobileSubscriptionPurchaseRoutes.js",
+      "isRegistered": true,
+      "controllers": [],
+      "services": [],
+      "routeCount": 0
+    },
+    {
+      "routeFile": "subscriptionManagementRoutes.js",
+      "isRegistered": true,
+      "controllers": [],
+      "services": [],
+      "routeCount": 0
+    },
+    {
+      "routeFile": "subscriptionRoutes.js",
+      "isRegistered": true,
+      "controllers": [
+        "../controllers/subscriptionPlansController",
+        "../controllers/subscriptionsController",
+        "../controllers/territoriesController",
+        "../controllers/billingPaymentsController",
+        "../controllers/activeSubscriptionsController"
+      ],
+      "services": [],
+      "routeCount": 0
+    },
+    {
+      "routeFile": "supabaseSubscriptionPlansRoutes.js",
+      "isRegistered": true,
+      "controllers": [],
+      "services": [],
+      "routeCount": 0
+    }
+  ]
+}

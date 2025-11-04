@@ -238,7 +238,23 @@ class AdminLeadsService {
         assignment_id: assignment.id
       });
 
-      // TODO: Send notification to agency
+      // Send notification to agency
+      try {
+        const notificationService = require('./notificationService');
+        const supabase = require('../config/supabaseClient');
+        const { data: lead } = await supabase
+          .from('leads')
+          .select('*')
+          .eq('id', leadId)
+          .single();
+        
+        if (lead) {
+          await notificationService.notifyLeadAssigned(agencyId, leadId, lead);
+        }
+      } catch (notifError) {
+        // Log but don't fail - notification is non-critical
+        console.warn('Failed to send notification (non-critical):', notifError.message);
+      }
       // await this.notifyAgency(agencyId, leadId, 'lead_reassigned');
 
       return {
@@ -944,8 +960,44 @@ class AdminLeadsService {
    * @param {string} territory - Territory
    */
   async updateDistributionSequence(agencyId, territory) {
-    // Placeholder - implement proper sequence tracking in production
-    console.log(`Updated distribution sequence for agency ${agencyId} in territory ${territory}`);
+    // This method is implemented in leadDistributionService
+    // This is kept for backward compatibility
+    // Actual sequence tracking is handled by leadDistributionService.updateDistributionSequence()
+    try {
+      const supabase = require('../config/supabaseClient');
+      const territoryKey = territory || 'default';
+      
+      // Update or insert sequence record
+      const { data: existing } = await supabase
+        .from('lead_distribution_sequence')
+        .select('id')
+        .eq('agency_id', agencyId)
+        .eq('territory', territoryKey)
+        .single();
+      
+      if (existing) {
+        await supabase
+          .from('lead_distribution_sequence')
+          .update({ 
+            last_assigned_at: new Date().toISOString(),
+            updated_at: new Date().toISOString()
+          })
+          .eq('id', existing.id);
+      } else {
+        await supabase
+          .from('lead_distribution_sequence')
+          .insert([{
+            agency_id: agencyId,
+            territory: territoryKey,
+            last_assigned_at: new Date().toISOString(),
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString()
+          }]);
+      }
+    } catch (error) {
+      // Table might not exist - that's okay
+      console.debug('Distribution sequence update skipped:', error.message);
+    }
   }
 
   /**
