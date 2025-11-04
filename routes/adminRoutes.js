@@ -30,20 +30,30 @@ router.post('/auth/login', async (req, res) => {
     }
 
     // Find admin user
-    const { data: admin, error } = await supabase
+    const { data: adminList, error: queryError } = await supabase
       .from('users')
       .select('*')
       .eq('email', email)
       .eq('role', 'super_admin')
       .eq('is_active', true)
-      .single();
+      .limit(1);
 
-    if (error || !admin) {
+    if (queryError) {
+      console.error('Login query error:', queryError);
+      return res.status(500).json({
+        success: false,
+        message: 'Database error during login'
+      });
+    }
+
+    if (!adminList || adminList.length === 0) {
       return res.status(401).json({
         success: false,
         message: 'Invalid credentials or insufficient permissions'
       });
     }
+
+    const admin = adminList[0];
 
     // Verify password
     const isValidPassword = await bcrypt.compare(password, admin.password_hash);
