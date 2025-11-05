@@ -1340,19 +1340,29 @@ app.post("/api/portals", async (req, res) => {
     const baseUrl = process.env.BASE_URL || process.env.FRONTEND_URL || `http://localhost:${PORT}`;
     const generated_webhook_url = `${baseUrl}/api/webhooks/${portal_code}`;
 
+    // Generate portal slug (required by database)
+    const portal_slug = body.slug || generateSlug(body.portal_name) || generateSlug(portal_code) || portal_code.toLowerCase().replace(/[^a-z0-9-]/g, '-');
+    if (!portal_slug || portal_slug.trim() === '') {
+      throw new Error('Unable to generate portal slug');
+    }
+
     const portalData = {
       portal_name: body.portal_name,
       portal_code,
+      portal_slug: portal_slug.trim(), // REQUIRED - database constraint
       portal_type: body.portal_type,
       industry: body.industry,
-      api_endpoint: body.api_endpoint,
-      schema_endpoint: body.schema_endpoint,
-      auth_type: body.auth_type,
-      auth_credentials: body.auth_credentials,
+      api_endpoint: body.api_endpoint || '',
+      schema_endpoint: body.schema_endpoint || '',
+      auth_type: body.auth_type || 'api_key',
+      auth_credentials: body.auth_credentials || '',
       api_key,
-      generated_webhook_url, // ✅ save it in your new column
+      generated_webhook_url,
       portal_status: "active",
-      health_status: "unknown"
+      health_status: "unknown",
+      total_leads: 0,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
     };
 
     // Optional: fetch initial lead count
@@ -1830,6 +1840,7 @@ app.use('/api/admin', adminSystemRoutes);
 app.use('/api/admin', adminRolesRoutes);
 app.use('/api/admin', adminLeadsRoutes);
 app.use('/api/admin', adminDocumentVerificationRoutes);
+// Register admin portals routes BEFORE other admin routes to ensure proper matching
 app.use('/api/admin', adminPortalsRoutes);
 app.use('/api/admin', adminWebhooksRoutes);
 app.use('/api/admin/leads', leadDistributionRoutes);
