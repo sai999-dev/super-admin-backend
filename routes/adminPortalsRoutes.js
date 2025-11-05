@@ -197,7 +197,7 @@ router.post('/portals', async (req, res) => {
     const api_key = generateApiKey();
 
     // Generate webhook URL
-    const baseUrl = process.env.BASE_URL || process.env.FRONTEND_URL || `http://localhost:${process.env.PORT || 3000}`;
+    const baseUrl = process.env.BASE_API_URL || `http://localhost:${process.env.PORT || 3000}`;
     const generated_webhook_url = `${baseUrl}/api/webhooks/${portal_code}`;
 
     // Fetch initial lead count
