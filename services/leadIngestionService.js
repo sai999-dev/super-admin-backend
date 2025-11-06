@@ -189,44 +189,44 @@ class LeadIngestionService {
     }
   }
 
-  /**
-   * Create lead in Supabase + log to audit_log
-   */
-  /**
- * Create lead in Supabase + log to audit_logs table
+  
+/**
+ * Create lead in Supabase + log to audit_logs
  */
 async createLead(leadData) {
   try {
-    // 1️⃣ Insert the new lead
-    const { data: lead, error: leadError } = await supabase
+    // 1️⃣ Insert the new lead into leads table
+    const { data: lead, error } = await supabase
       .from('leads')
       .insert([leadData])
       .select()
       .single();
 
-    if (leadError) {
-      logger.error('❌ Error creating lead:', leadError);
-      throw new Error(`Failed to create lead: ${leadError.message}`);
+    if (error) {
+      logger.error('❌ Error creating lead:', error);
+      throw new Error(`Failed to create lead: ${error.message}`);
     }
 
-    logger.info(`✅ Lead created successfully with ID: ${lead.id}`);
+    logger.info(`✅ Lead created successfully with lead_id: ${lead.lead_id}`);
 
-    // 2️⃣ Prepare audit record
+    // 2️⃣ Create audit log entry using the SAME lead_id
     const auditLog = {
-      lead_id: lead.id,
-      lead_data: lead, // Full JSON object
-      agency_id: null,
-      time_stamp: new Date().toISOString(),
-      action_status: 'created'
+      lead_id: lead.lead_id,                 // Use the same custom ID like "LEAD-00001"
+      lead_data: lead,                       // Save full lead data (JSON)
+      agency_id: null,                       // Not yet assigned
+      time_stamp: new Date().toISOString(),  // Current timestamp
+      action_status: 'created'               // Action type
     };
 
     // 3️⃣ Insert into audit_logs table
-    const { error: auditError } = await supabase.from('audit_logs').insert([auditLog]);
+    const { error: auditError } = await supabase
+      .from('audit_logs')
+      .insert([auditLog]);
 
     if (auditError) {
-      logger.error(`⚠️ Failed to insert into audit_logs: ${auditError.message}`);
+      logger.error(`⚠️ Failed to insert audit log for lead ${lead.lead_id}:`, auditError);
     } else {
-      logger.info(`📝 Lead ${lead.id} successfully logged in audit_logs`);
+      logger.info(`📝 Lead ${lead.lead_id} successfully logged in audit_logs`);
     }
 
     return lead;
@@ -235,6 +235,7 @@ async createLead(leadData) {
     throw error;
   }
 }
+
 
 }
 
