@@ -1,6 +1,6 @@
 /**
  * Lead Ingestion Service
- * Handles transformation and validation of leads from public portals
+ * Handles transformation, validation, and logging of leads from public portals
  */
 
 const supabase = require('../config/supabaseClient');
@@ -29,7 +29,7 @@ class LeadIngestionService {
         source: portal.portal_name || 'external_portal',
         status: 'pending', // must match your leads_status_check constraint
         created_at: new Date().toISOString(),
-        raw_payload: payload // store original data
+        raw_payload: payload // store original form data
       };
 
       return transformed;
@@ -88,8 +88,10 @@ class LeadIngestionService {
    */
   async processLead(payload, portal) {
     try {
+      // Step 1: Transform input data
       const transformedData = this.transformData(payload, portal);
 
+      // Step 2: Validate
       const validation = this.validate(transformedData);
       if (!validation.valid) {
         return {
@@ -100,6 +102,7 @@ class LeadIngestionService {
         };
       }
 
+      // Step 3: Check duplicates
       const duplicateCheck = await this.checkDuplicates(transformedData);
       if (duplicateCheck.isDuplicate) {
         logger.warn(`Duplicate lead detected: ${duplicateCheck.reason}`);
@@ -111,6 +114,7 @@ class LeadIngestionService {
         };
       }
 
+      // Step 4: Create lead
       const leadResult = await this.createLead(transformedData);
 
       return {
@@ -133,6 +137,7 @@ class LeadIngestionService {
    */
   async checkDuplicates(leadData) {
     try {
+      // 🔹 Check by email
       if (leadData.email) {
         const { data: emailMatch } = await supabase
           .from('leads')
@@ -151,6 +156,7 @@ class LeadIngestionService {
         }
       }
 
+      // 🔹 Check by phone number
       if (leadData.phone_number) {
         const normalizedPhone = leadData.phone_number.replace(/\D/g, '');
         if (normalizedPhone.length >= 10) {
@@ -183,10 +189,13 @@ class LeadIngestionService {
     }
   }
 
-  /**
-   * Create lead in Supabase
-   */
-  async createLead(leadData) {
+  
+/**
+ * Create lead in Supabase + log to audit_logs
+ */
+async createLead(leadData) {
+  try {
+    // 1️⃣ Insert the new lead into leads table
     const { data: lead, error } = await supabase
       .from('leads')
       .insert([leadData])
@@ -194,12 +203,40 @@ class LeadIngestionService {
       .single();
 
     if (error) {
-      logger.error('Error creating lead:', error);
+      logger.error('❌ Error creating lead:', error);
       throw new Error(`Failed to create lead: ${error.message}`);
     }
 
+    logger.info(`✅ Lead created successfully with lead_id: ${lead.lead_id}`);
+
+    // 2️⃣ Create audit log entry using the SAME lead_id
+    const auditLog = {
+      lead_id: lead.lead_id,                 // Use the same custom ID like "LEAD-00001"
+      lead_data: lead,                       // Save full lead data (JSON)
+      agency_id: null,                       // Not yet assigned
+      time_stamp: new Date().toISOString(),  // Current timestamp
+      action_status: 'created'               // Action type
+    };
+
+    // 3️⃣ Insert into audit_logs table
+    const { error: auditError } = await supabase
+      .from('audit_logs')
+      .insert([auditLog]);
+
+    if (auditError) {
+      logger.error(`⚠️ Failed to insert audit log for lead ${lead.lead_id}:`, auditError);
+    } else {
+      logger.info(`📝 Lead ${lead.lead_id} successfully logged in audit_logs`);
+    }
+
     return lead;
+  } catch (error) {
+    logger.error('💥 Unexpected error in createLead():', error.message);
+    throw error;
   }
+}
+
+
 }
 
 module.exports = new LeadIngestionService();
