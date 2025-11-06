@@ -16,6 +16,36 @@ const crypto = require('crypto');
 const path = require('path');
 const fs = require('fs');
 const { performanceMonitor, errorTracker, getHealthData } = require('./middleware/observability');
+const app = express();
+
+
+
+// ✅ CORS Setup for Webhooks - Allow ALL origins for webhook routes (authenticated via API key)
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+
+  // Allow all origins for webhook endpoints (they're protected by API key)
+  if (req.path.startsWith('/api/webhooks/')) {
+    res.setHeader('Access-Control-Allow-Origin', origin || '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, x-api-key, Authorization');
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
+
+    if (req.method === 'OPTIONS') {
+      return res.sendStatus(204);
+    }
+  }
+
+  next();
+});
+
+
+
+// Parse incoming requests
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+
+
 
 // Import services for webhook processing (moved to webhook handler to avoid circular dependencies)
 
@@ -24,7 +54,7 @@ dotenv.config({ path: path.join(__dirname, 'config.env') });
 dotenv.config({ path: path.join(__dirname, '..', 'config.env') });
 dotenv.config(); // Also try default .env location
 
-const app = express();
+
 const PORT = process.env.PORT || 3000;
 const NODE_ENV = process.env.NODE_ENV || 'development';
 
@@ -32,6 +62,9 @@ console.log('🚀 Starting Lead Marketplace Unified Server...');
 console.log(`📝 Environment: ${NODE_ENV}`);
 console.log(`🔑 JWT Secret loaded: ${process.env.JWT_SECRET ? 'Yes' : 'No'}`);
 console.log(`🔐 Demo token enabled: ${NODE_ENV === 'development' ? 'Yes' : 'No'}`);
+
+
+
 
 // =====================================================
 // MIDDLEWARE SETUP
@@ -76,60 +109,73 @@ app.use(helmet({
   crossOriginEmbedderPolicy: false
 }));
 
-// CORS configuration
-app.use(cors({
-  origin: function (origin, callback) {
-    // Allow requests with no origin (like mobile apps or curl requests)
-    if (!origin) return callback(null, true);
-    
-    // Build allowed origins list from environment variables
-    const allowedOrigins = [];
-    
-    // Add FRONTEND_URL if provided
-    if (process.env.FRONTEND_URL) {
-      allowedOrigins.push(process.env.FRONTEND_URL);
-    }
-    
-    // Add BASE_URL if provided (and different from FRONTEND_URL)
-    if (process.env.BASE_URL && process.env.BASE_URL !== process.env.FRONTEND_URL) {
-      allowedOrigins.push(process.env.BASE_URL);
-    }
-    
-    // Add ALLOWED_ORIGINS if provided (comma-separated list)
-    if (process.env.ALLOWED_ORIGINS) {
-      const origins = process.env.ALLOWED_ORIGINS.split(',').map(url => url.trim());
-      allowedOrigins.push(...origins);
-    }
-    
-    // In development, allow localhost on any port (if no FRONTEND_URL is set)
-    if (NODE_ENV === 'development' && !process.env.FRONTEND_URL) {
-      if (origin.match(/^https?:\/\/localhost(:\d+)?$/)) {
-        return callback(null, true);
-      }
-      if (origin.match(/^https?:\/\/127\.0\.0\.1(:\d+)?$/)) {
-        return callback(null, true);
-      }
-    }
-    
-    if (allowedOrigins.includes(origin)) {
-      return callback(null, true);
-    }
-    
-    callback(new Error('Not allowed by CORS'));
-  },
-  credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin'],
-  exposedHeaders: ['Content-Length', 'X-Foo', 'X-Bar'],
-  optionsSuccessStatus: 200 // some legacy browsers (IE11, various SmartTVs) choke on 204
-}));
-
-// Handle preflight OPTIONS requests (Express 5.x compatible)
+// CORS configuration - Dynamic origin checking with webhook support
 app.use((req, res, next) => {
+  // Skip CORS middleware for webhook routes (handled by earlier middleware)
+  if (req.path.startsWith('/api/webhooks/')) {
+    return next();
+  }
+
+  // Apply CORS middleware for non-webhook routes
+  cors({
+    origin: function (origin, callback) {
+      // Allow requests with no origin (like mobile apps or curl requests)
+      if (!origin) return callback(null, true);
+
+      // Build allowed origins list from environment variables
+      const allowedOrigins = [];
+
+      // Add FRONTEND_URL if provided
+      if (process.env.FRONTEND_URL) {
+        allowedOrigins.push(process.env.FRONTEND_URL);
+      }
+
+      // Add BASE_URL if provided (and different from FRONTEND_URL)
+      if (process.env.BASE_URL && process.env.BASE_URL !== process.env.FRONTEND_URL) {
+        allowedOrigins.push(process.env.BASE_URL);
+      }
+
+      // Add ALLOWED_ORIGINS if provided (comma-separated list)
+      if (process.env.ALLOWED_ORIGINS) {
+        const origins = process.env.ALLOWED_ORIGINS.split(',').map(url => url.trim());
+        allowedOrigins.push(...origins);
+      }
+
+      // In development, allow localhost on any port (if no FRONTEND_URL is set)
+      if (NODE_ENV === 'development' && !process.env.FRONTEND_URL) {
+        if (origin.match(/^https?:\/\/localhost(:\d+)?$/)) {
+          return callback(null, true);
+        }
+        if (origin.match(/^https?:\/\/127\.0\.0\.1(:\d+)?$/)) {
+          return callback(null, true);
+        }
+      }
+
+      if (allowedOrigins.includes(origin)) {
+        return callback(null, true);
+      }
+
+      callback(new Error('Not allowed by CORS'));
+    },
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin', 'x-api-key'],
+    exposedHeaders: ['Content-Length', 'X-Foo', 'X-Bar'],
+    optionsSuccessStatus: 200
+  })(req, res, next);
+});
+
+// Handle preflight OPTIONS requests for non-webhook routes (Express 5.x compatible)
+app.use((req, res, next) => {
+  // Webhook OPTIONS already handled by earlier middleware
+  if (req.path.startsWith('/api/webhooks/')) {
+    return next();
+  }
+
   if (req.method === 'OPTIONS') {
     res.header('Access-Control-Allow-Origin', req.headers.origin || '*');
     res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS, PATCH');
-    res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept, Origin');
+    res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept, Origin, x-api-key');
     res.header('Access-Control-Allow-Credentials', 'true');
     return res.sendStatus(200);
   }
@@ -1146,7 +1192,7 @@ app.post("/api/create-portal", async (req, res) => {
     }
 
     // Generate webhook URL automatically
-    const baseUrl = process.env.BASE_URL || process.env.FRONTEND_URL || `http://localhost:${PORT}`;
+    const baseUrl = process.env.BASE_API_URL || process.env.BASE_URL || process.env.FRONTEND_URL || `http://localhost:${PORT}`;
     const generated_webhook_url = `${baseUrl}/api/webhooks/${portalCode}`;
 
     // Prepare insert data (only include fields that exist in Supabase schema)
@@ -1331,22 +1377,32 @@ app.post("/api/portals", async (req, res) => {
     // Generate unique code, api key, and webhook URL
     const portal_code = body.portal_code || generateSlug(body.portal_name);
     const api_key = generateApiKey();
-    const baseUrl = process.env.BASE_URL || process.env.FRONTEND_URL || `http://localhost:${PORT}`;
+    const baseUrl = process.env.BASE_API_URL || process.env.BASE_URL || process.env.FRONTEND_URL || `http://localhost:${PORT}`;
     const generated_webhook_url = `${baseUrl}/api/webhooks/${portal_code}`;
+
+    // Generate portal slug (required by database)
+    const portal_slug = body.slug || generateSlug(body.portal_name) || generateSlug(portal_code) || portal_code.toLowerCase().replace(/[^a-z0-9-]/g, '-');
+    if (!portal_slug || portal_slug.trim() === '') {
+      throw new Error('Unable to generate portal slug');
+    }
 
     const portalData = {
       portal_name: body.portal_name,
       portal_code,
+      portal_slug: portal_slug.trim(), // REQUIRED - database constraint
       portal_type: body.portal_type,
       industry: body.industry,
-      api_endpoint: body.api_endpoint,
-      schema_endpoint: body.schema_endpoint,
-      auth_type: body.auth_type,
-      auth_credentials: body.auth_credentials,
+      api_endpoint: body.api_endpoint || '',
+      schema_endpoint: body.schema_endpoint || '',
+      auth_type: body.auth_type || 'api_key',
+      auth_credentials: body.auth_credentials || '',
       api_key,
-      generated_webhook_url, // ✅ save it in your new column
+      generated_webhook_url,
       portal_status: "active",
-      health_status: "unknown"
+      health_status: "unknown",
+      total_leads: 0,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
     };
 
     // Optional: fetch initial lead count
@@ -1401,7 +1457,7 @@ app.post('/api/webhooks/:portal_code', async (req, res) => {
   const startTime = Date.now();
 
   try {
-    // Step 1: Authenticate webhook (00:00.150)
+    // ✅ Step 1: Authenticate webhook
     if (!apiKey) {
       await auditService.logWebhook(null, portal_code, req.body, 'failed', 'Missing API key');
       return res.status(401).json({ success: false, message: 'Missing API key' });
@@ -1424,15 +1480,14 @@ app.post('/api/webhooks/:portal_code', async (req, res) => {
       return res.status(403).json({ success: false, message: 'Portal is not active' });
     }
 
-    // Step 2: Log webhook reception (00:00.200)
+    // ✅ Step 2: Log webhook reception
     await auditService.logWebhook(portal.id, portal_code, req.body, 'success', 'Webhook received');
 
-    // Step 3: Transform data (00:00.300)
+    // ✅ Step 3: Transform data
     const transformedData = leadIngestionService.transformData(req.body, portal);
 
-    // Step 4: Validate (00:00.350)
+    // ✅ Step 4: Validate
     const validation = leadIngestionService.validate(transformedData);
-
     if (!validation.valid) {
       await auditService.log({
         action: 'lead_validation_failed',
@@ -1449,7 +1504,7 @@ app.post('/api/webhooks/:portal_code', async (req, res) => {
       });
     }
 
-    // Step 5: Process lead ingestion (create lead) (00:00.450)
+    // ✅ Step 5: Process lead ingestion
     const leadResult = await leadIngestionService.processLead(req.body, portal);
 
     if (!leadResult.success) {
@@ -1469,11 +1524,10 @@ app.post('/api/webhooks/:portal_code', async (req, res) => {
 
     const leadId = leadResult.lead_id;
 
-    // Log lead creation
+    // ✅ Log lead creation
     await auditService.logLeadCreation(leadId, portal.id, transformedData);
 
-    // Step 6: Automatically distribute lead (00:00.550-00:00.650)
-    // Get the created lead for distribution
+    // ✅ Step 6: Try to distribute lead automatically
     const { data: createdLead, error: leadFetchError } = await supabase
       .from('leads')
       .select('*')
@@ -1481,53 +1535,63 @@ app.post('/api/webhooks/:portal_code', async (req, res) => {
       .single();
 
     if (!leadFetchError && createdLead) {
-      // Trigger automatic distribution
       const distributionResult = await leadDistributionService.distributeLead(createdLead);
 
       if (distributionResult.success) {
-        // Log assignment
         await auditService.logLeadAssignment(
           leadId,
           distributionResult.agency_id,
           distributionResult.assignment_id
         );
 
-        // Notification already sent by leadDistributionService during distribution
-        // No additional notification needed here
-
         const processingTime = Date.now() - startTime;
         return res.status(200).json({
           success: true,
           message: 'Lead received and distributed successfully',
           data: {
-            lead_id: leadId,
+            lead_uuid: leadId,
+            lead_id: createdLead.lead_id || null,
             assigned_to_agency: distributionResult.agency_id,
             assignment_id: distributionResult.assignment_id,
             processing_time_ms: processingTime
           }
         });
       } else {
-        // Lead created but not distributed (no eligible agencies)
         const processingTime = Date.now() - startTime;
         return res.status(200).json({
           success: true,
           message: 'Lead received successfully but not yet assigned',
           warning: distributionResult.message,
           data: {
-            lead_id: leadId,
+            lead_uuid: leadId,
+            lead_id: createdLead.lead_id || null,
             processing_time_ms: processingTime
           }
         });
       }
     }
 
-    // Lead created but distribution failed or lead not found
+    // ✅ Lead created but distribution failed or not found
+    const { data: createdLeadFull, error: fetchError } = await supabase
+      .from('leads')
+      .select('id, lead_id, lead_name, email, phone_number, created_at')
+      .eq('id', leadId)
+      .single();
+
+    if (fetchError) {
+      console.warn('⚠️ Could not fetch created lead_id:', fetchError.message);
+    }
+
     const processingTime = Date.now() - startTime;
     return res.status(200).json({
       success: true,
       message: 'Lead received successfully',
       data: {
-        lead_id: leadId,
+        lead_uuid: leadId,
+        lead_id: createdLeadFull?.lead_id || null,
+        lead_name: createdLeadFull?.lead_name || null,
+        email: createdLeadFull?.email || null,
+        phone_number: createdLeadFull?.phone_number || null,
         processing_time_ms: processingTime
       }
     });
@@ -1550,6 +1614,7 @@ app.post('/api/webhooks/:portal_code', async (req, res) => {
     });
   }
 });
+
 
 
 
@@ -1824,6 +1889,7 @@ app.use('/api/admin', adminSystemRoutes);
 app.use('/api/admin', adminRolesRoutes);
 app.use('/api/admin', adminLeadsRoutes);
 app.use('/api/admin', adminDocumentVerificationRoutes);
+// Register admin portals routes BEFORE other admin routes to ensure proper matching
 app.use('/api/admin', adminPortalsRoutes);
 app.use('/api/admin', adminWebhooksRoutes);
 app.use('/api/admin/leads', leadDistributionRoutes);

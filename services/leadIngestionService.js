@@ -15,31 +15,22 @@ class LeadIngestionService {
    */
   transformData(payload, portal) {
     try {
-      // Basic transformation - extract common fields
-      // This can be extended to support portal-specific schemas
       const transformed = {
         portal_id: portal.id,
-        lead_name: payload.name || payload.lead_name || payload.full_name || 'Unknown',
-        email: payload.email || payload.email_address || null,
-        phone_number: payload.phone || payload.phone_number || payload.phoneNumber || null,
-        city: payload.city || payload.location?.city || null,
-        state: payload.state || payload.location?.state || payload.state_code || null,
-        zipcode: payload.zipcode || payload.zip_code || payload.postal_code || payload.zip || null,
-        zip_code: payload.zipcode || payload.zip_code || payload.postal_code || payload.zip || null,
-        address: payload.address || payload.street_address || payload.full_address || null,
-        industry_type: payload.industry || payload.industry_type || portal.industry || 'non_healthcare',
-        source: payload.source || portal.portal_name || 'unknown',
-        payload: payload, // Keep original for reference
-        status: 'new',
-        created_at: new Date().toISOString()
+        lead_name: payload.name || 'Unknown',
+        email: payload.email || null,
+        phone_number: payload.phone || payload.contact || null,
+        property_type: payload.propertyType || null,
+        budget_range: payload.budgetRange || null,
+        preferred_location: payload.preferredLocation || null,
+        timeline: payload.timeline || null,
+        needs: payload.needs || null,
+        additional_details: payload.additionalDetails || null,
+        source: portal.portal_name || 'external_portal',
+        status: 'pending', // must match your leads_status_check constraint
+        created_at: new Date().toISOString(),
+        raw_payload: payload // store original data
       };
-
-      // Extract territory from zipcode
-      if (transformed.zipcode) {
-        transformed.territory = transformed.zipcode;
-      } else if (transformed.city && transformed.state) {
-        transformed.territory = `${transformed.city}, ${transformed.state}`;
-      }
 
       return transformed;
     } catch (error) {
@@ -50,13 +41,12 @@ class LeadIngestionService {
 
   /**
    * Validate transformed lead data
-   * @param {Object} leadData - Transformed lead data
-   * @returns {Object} - Validation result
+   * @param {Object} leadData
+   * @returns {Object}
    */
   validate(leadData) {
     const errors = [];
 
-    // Required fields
     if (!leadData.lead_name || leadData.lead_name.trim() === '') {
       errors.push('Lead name is required');
     }
@@ -65,12 +55,10 @@ class LeadIngestionService {
       errors.push('Portal ID is required');
     }
 
-    // Contact validation
     if (!leadData.email && !leadData.phone_number) {
       errors.push('Either email or phone number is required');
     }
 
-    // Email format validation
     if (leadData.email) {
       const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
       if (!emailRegex.test(leadData.email)) {
@@ -78,7 +66,6 @@ class LeadIngestionService {
       }
     }
 
-    // Phone format validation (basic)
     if (leadData.phone_number) {
       const phoneRegex = /^[\d\s\-\(\)\+]+$/;
       if (!phoneRegex.test(leadData.phone_number)) {
@@ -86,9 +73,8 @@ class LeadIngestionService {
       }
     }
 
-    // Territory validation (zipcode or city/state)
-    if (!leadData.zipcode && !leadData.city) {
-      errors.push('Either zipcode or city is required for territory matching');
+    if (!leadData.needs || leadData.needs.trim() === '') {
+      errors.push('Needs field is required');
     }
 
     return {
@@ -99,18 +85,12 @@ class LeadIngestionService {
 
   /**
    * Process complete lead ingestion flow
-   * @param {Object} payload - Raw payload from portal
-   * @param {Object} portal - Portal configuration
-   * @returns {Object} - Processing result
    */
   async processLead(payload, portal) {
     try {
-      // Step 1: Transform data
       const transformedData = this.transformData(payload, portal);
 
-      // Step 2: Validate
       const validation = this.validate(transformedData);
-
       if (!validation.valid) {
         return {
           success: false,
@@ -120,9 +100,7 @@ class LeadIngestionService {
         };
       }
 
-      // Step 3: Check for duplicates (optional - based on email or phone)
       const duplicateCheck = await this.checkDuplicates(transformedData);
-
       if (duplicateCheck.isDuplicate) {
         logger.warn(`Duplicate lead detected: ${duplicateCheck.reason}`);
         return {
@@ -133,7 +111,6 @@ class LeadIngestionService {
         };
       }
 
-      // Step 4: Create lead in database
       const leadResult = await this.createLead(transformedData);
 
       return {
@@ -141,7 +118,6 @@ class LeadIngestionService {
         lead_id: leadResult.id,
         data: transformedData
       };
-
     } catch (error) {
       logger.error('Error processing lead:', error);
       return {
@@ -153,21 +129,16 @@ class LeadIngestionService {
   }
 
   /**
-   * Check for duplicate leads
-   * @param {Object} leadData - Lead data to check
-   * @returns {Object} - Duplicate check result
+   * Check for duplicate leads (email or phone in last 24h)
    */
   async checkDuplicates(leadData) {
     try {
-      const checks = [];
-
-      // Check by email
       if (leadData.email) {
         const { data: emailMatch } = await supabase
           .from('leads')
           .select('id, created_at')
           .eq('email', leadData.email.toLowerCase())
-          .gte('created_at', new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()) // Last 24 hours
+          .gte('created_at', new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString())
           .limit(1)
           .single();
 
@@ -180,7 +151,6 @@ class LeadIngestionService {
         }
       }
 
-      // Check by phone
       if (leadData.phone_number) {
         const normalizedPhone = leadData.phone_number.replace(/\D/g, '');
         if (normalizedPhone.length >= 10) {
@@ -193,7 +163,7 @@ class LeadIngestionService {
           if (phoneMatches) {
             for (const match of phoneMatches) {
               const matchNormalized = (match.phone_number || '').replace(/\D/g, '');
-              if (matchNormalized.length >= 10 && 
+              if (matchNormalized.length >= 10 &&
                   normalizedPhone.slice(-10) === matchNormalized.slice(-10)) {
                 return {
                   isDuplicate: true,
@@ -206,23 +176,15 @@ class LeadIngestionService {
         }
       }
 
-      return {
-        isDuplicate: false
-      };
-
+      return { isDuplicate: false };
     } catch (error) {
       logger.warn('Error checking duplicates:', error.message);
-      // Don't fail on duplicate check errors - allow lead creation
-      return {
-        isDuplicate: false
-      };
+      return { isDuplicate: false };
     }
   }
 
   /**
-   * Create lead in database
-   * @param {Object} leadData - Transformed and validated lead data
-   * @returns {Object} - Created lead record
+   * Create lead in Supabase
    */
   async createLead(leadData) {
     const { data: lead, error } = await supabase
@@ -241,4 +203,3 @@ class LeadIngestionService {
 }
 
 module.exports = new LeadIngestionService();
-

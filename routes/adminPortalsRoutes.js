@@ -11,6 +11,23 @@ const generateApiKey = () => {
   return `${prefix}${random}`;
 };
 
+// Helper function to generate slug from name
+const generateSlug = (name) => {
+  if (!name || typeof name !== 'string') {
+    return '';
+  }
+  const slug = name
+    .toLowerCase()
+    .trim()
+    .replace(/[^\w\s-]/g, '') // Remove special characters
+    .replace(/\s+/g, '-') // Replace spaces with hyphens
+    .replace(/-+/g, '-') // Replace multiple hyphens with single hyphen
+    .replace(/^-+|-+$/g, ''); // Remove leading/trailing hyphens
+  
+  // Ensure we never return empty string
+  return slug || 'portal-' + Date.now().toString().slice(-6);
+};
+
 // Helper function to fetch lead count from API
 const fetchLeadCountFromAPI = async (apiEndpoint, authType, authCredentials) => {
   try {
@@ -89,7 +106,8 @@ router.get('/portals', async (req, res) => {
       portal_code: portal.portal_code,
       portal_type: portal.portal_type,
       industry: portal.industry,
-      status: portal.portal_status || portal.status || 'active',
+      portal_status: portal.portal_status || portal.status || 'active', // Keep portal_status for frontend
+      status: portal.portal_status || portal.status || 'active', // Also include status for compatibility
       api_endpoint: portal.api_endpoint,
       api_key: portal.api_key,
       total_leads: portal.total_leads || 0,
@@ -120,6 +138,7 @@ router.get('/portals', async (req, res) => {
 router.get('/portals/:id', async (req, res) => {
   try {
     const { id } = req.params;
+    console.log('🔍 BACKEND: GET /api/admin/portals/:id - Portal ID:', id);
 
     const { data, error } = await supabase
       .from('portals')
@@ -127,14 +146,28 @@ router.get('/portals/:id', async (req, res) => {
       .eq('id', id)
       .single();
 
-    if (error) throw error;
+    if (error) {
+      console.error('❌ BACKEND: Supabase error:', error);
+      throw error;
+    }
     
     if (!data) {
+      console.log('❌ BACKEND: Portal not found for ID:', id);
       return res.status(404).json({
         success: false,
         message: 'Portal not found'
       });
     }
+
+    console.log('✅ BACKEND: Portal found:', {
+      id: data.id,
+      portal_name: data.portal_name,
+      portal_code: data.portal_code,
+      portal_type: data.portal_type,
+      industry: data.industry,
+      portal_status: data.portal_status || data.status
+    });
+    console.log('📦 BACKEND: Full portal data keys:', Object.keys(data));
 
     res.json({
       success: true,
@@ -143,7 +176,7 @@ router.get('/portals/:id', async (req, res) => {
       }
     });
   } catch (error) {
-    console.error('Error fetching portal:', error);
+    console.error('❌ BACKEND: Error fetching portal:', error);
     res.status(500).json({
       success: false,
       message: 'Failed to fetch portal',
@@ -157,22 +190,48 @@ router.get('/portals/:id', async (req, res) => {
  * Create new portal
  */
 router.post('/portals', async (req, res) => {
+  console.log('🚨🚨🚨 ROUTE HANDLER CALLED - POST /api/admin/portals 🚨🚨🚨');
   try {
+    // Log incoming request for debugging
+    console.log('📥 POST /api/admin/portals - Request received');
+    console.log('📥 Request body:', JSON.stringify(req.body, null, 2));
+    
+    // Extract all possible fields from request body
     const {
       portal_name,
       portal_code,
+      slug, // Frontend may send this
       portal_type,
       industry,
       api_endpoint,
       schema_endpoint,
       auth_type,
       auth_credentials,
-      status = 'active',
-      schema_fields
+      status,
+      schema_fields,
+      base_url,
+      webhook_url,
+      portal_description,
+      auto_activate,
+      name, // Frontend may send 'name' instead of 'portal_name'
+      type, // Frontend may send 'type' instead of 'portal_type'
+      description // Frontend may send 'description' instead of 'portal_description'
     } = req.body;
 
+    // Normalize field names (handle both variants)
+    const finalPortalName = portal_name || name || '';
+    const finalPortalCode = portal_code || '';
+    const finalPortalType = portal_type || type || '';
+    const finalIndustry = industry || '';
+    const finalDescription = portal_description || description || null;
+    const finalBaseUrl = base_url || null;
+    const finalWebhookUrl = webhook_url || null;
+    
+    // Determine status - use auto_activate if provided, otherwise use status or default
+    const finalStatus = (auto_activate === true || status === 'active') ? 'active' : (status || 'active');
+
     // Validation
-    if (!portal_name || !portal_code || !portal_type || !industry) {
+    if (!finalPortalName || !finalPortalCode || !finalPortalType || !finalIndustry) {
       return res.status(400).json({
         success: false,
         message: 'Missing required fields: portal_name, portal_code, portal_type, industry'
@@ -183,7 +242,7 @@ router.post('/portals', async (req, res) => {
     const { data: existing } = await supabase
       .from('portals')
       .select('id')
-      .eq('portal_code', portal_code)
+      .eq('portal_code', finalPortalCode)
       .maybeSingle();
 
     if (existing) {
@@ -196,9 +255,39 @@ router.post('/portals', async (req, res) => {
     // Generate API key
     const api_key = generateApiKey();
 
-    // Generate webhook URL
-    const baseUrl = process.env.BASE_URL || process.env.FRONTEND_URL || `http://localhost:${process.env.PORT || 3000}`;
-    const generated_webhook_url = `${baseUrl}/api/webhooks/${portal_code}`;
+    // Generate portal slug - use provided slug or generate from name
+    // Ensure slug is never empty or null (database requires this)
+    let portal_slug = '';
+    
+    if (slug && typeof slug === 'string' && slug.trim()) {
+      portal_slug = slug.trim();
+    } else if (finalPortalName && finalPortalName.trim()) {
+      portal_slug = generateSlug(finalPortalName);
+    } else if (finalPortalCode && finalPortalCode.trim()) {
+      portal_slug = generateSlug(finalPortalCode);
+    }
+    
+    // Final fallback: use portal_code cleaned up
+    if (!portal_slug || portal_slug.trim() === '') {
+      portal_slug = (finalPortalCode || 'portal').toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/^-+|-+$/g, '');
+      if (!portal_slug) {
+        portal_slug = 'portal-' + Date.now().toString().slice(-8);
+      }
+    }
+    
+    // Ensure it's not empty (database constraint)
+    if (!portal_slug || portal_slug.trim() === '') {
+      throw new Error('Unable to generate portal slug. Please provide a valid portal name or slug.');
+    }
+    
+    // Debug logging
+    console.log('🔍 Generated portal_slug:', portal_slug);
+    console.log('🔍 finalPortalName:', finalPortalName);
+    console.log('🔍 finalPortalCode:', finalPortalCode);
+
+    // Generate webhook URL - use BASE_API_URL for more specific configuration
+    const baseUrl = process.env.BASE_API_URL || process.env.BASE_URL || process.env.FRONTEND_URL || `http://localhost:${process.env.PORT || 3000}`;
+    const generated_webhook_url = `${baseUrl}/api/webhooks/${finalPortalCode}`;
 
     // Fetch initial lead count
     let total_leads = 0;
@@ -211,31 +300,58 @@ router.post('/portals', async (req, res) => {
     }
 
     // Create portal
+    // Note: api_endpoint is required by database, provide default if not set
+    // Final safety check - portal_slug CANNOT be null or empty
+    if (!portal_slug || portal_slug.trim() === '' || portal_slug === null || portal_slug === undefined) {
+      console.error('❌ CRITICAL: portal_slug is invalid:', portal_slug);
+      throw new Error('Portal slug generation failed. This is a critical error.');
+    }
+    
+    console.log('🔍 Creating portal with slug:', portal_slug);
+    console.log('🔍 portalData will include portal_slug:', portal_slug);
+    
     const portalData = {
-      portal_name,
-      portal_code,
-      portal_type,
-      industry,
-      api_endpoint: api_endpoint || null,
-      schema_endpoint: schema_endpoint || null,
+      portal_name: finalPortalName,
+      portal_code: finalPortalCode,
+      portal_slug: portal_slug.trim(), // Required by database - MUST NOT BE NULL - TRIM to ensure no whitespace issues
+      portal_type: finalPortalType,
+      industry: finalIndustry,
+      portal_description: finalDescription,
+      base_url: finalBaseUrl,
+      webhook_url: finalWebhookUrl,
+      api_endpoint: api_endpoint || '', // Required field, use empty string as default
+      schema_endpoint: schema_endpoint || '', // Required field, use empty string as default
       auth_type: auth_type || 'api_key',
-      auth_credentials: auth_credentials || null,
+      auth_credentials: auth_credentials || '', // Required field, use empty string as default
       api_key,
       generated_webhook_url,
-      portal_status: status,
+      portal_status: finalStatus,
       health_status: 'unknown',
       total_leads,
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString()
     };
 
+    console.log('🔍 About to insert portalData:', JSON.stringify(portalData, null, 2));
+    console.log('🔍 portal_slug value:', portalData.portal_slug);
+    console.log('🔍 portal_slug type:', typeof portalData.portal_slug);
+    console.log('🔍 portal_slug length:', portalData.portal_slug ? portalData.portal_slug.length : 'null/undefined');
+    
     const { data, error } = await supabase
       .from('portals')
       .insert([portalData])
       .select()
       .single();
 
-    if (error) throw error;
+    if (error) {
+      console.error('❌ Supabase insert error:', error);
+      console.error('❌ Error code:', error.code);
+      console.error('❌ Error message:', error.message);
+      console.error('❌ Error details:', error.details);
+      throw error;
+    }
+    
+    console.log('✅ Portal inserted successfully:', data.id);
 
     // Save schema fields if provided
     if (data.id && schema_fields && Array.isArray(schema_fields) && schema_fields.length > 0) {
@@ -260,20 +376,58 @@ router.post('/portals', async (req, res) => {
       }
     }
 
+    // Add api_key and webhook_endpoint to portal data for frontend
+    // Use generated_webhook_url from database if available, otherwise use the one we generated
+    const webhookUrl = data.generated_webhook_url || generated_webhook_url;
+    const portalResponse = {
+      ...data,
+      api_key: api_key,
+      webhook_endpoint: webhookUrl, // Frontend expects this property name
+      generated_webhook_url: webhookUrl // Keep original property for compatibility
+    };
+
     res.status(201).json({
       success: true,
       message: 'Portal created successfully',
-      data: {
-        portal: data,
-        api_key: api_key // Return API key for frontend to display
-      }
+      data: [portalResponse], // Return as array to match frontend expectations
+      api_key: api_key, // Also return API key separately for easy access
+      portal: portalResponse // Include portal object for backward compatibility
     });
   } catch (error) {
-    console.error('Error creating portal:', error);
-    res.status(500).json({
+    console.error('❌ Error creating portal:', error);
+    console.error('Error stack:', error.stack);
+    console.error('Request body:', JSON.stringify(req.body, null, 2));
+    
+    // Provide more detailed error information
+    let errorMessage = error.message || 'Failed to create portal';
+    let statusCode = 500;
+    
+    // Handle specific database errors
+    if (error.code) {
+      console.error('Database error code:', error.code);
+      if (error.code === '23505') { // Unique violation
+        errorMessage = 'Portal code or slug already exists';
+        statusCode = 400;
+      } else if (error.code === '23502') { // Not null violation
+        errorMessage = `Missing required field: ${error.column || 'unknown'}`;
+        statusCode = 400;
+      }
+    }
+    
+    // Handle Supabase errors
+    if (error.message && error.message.includes('violates not-null constraint')) {
+      const match = error.message.match(/column "([^"]+)"/);
+      if (match) {
+        errorMessage = `Missing required field: ${match[1]}`;
+        statusCode = 400;
+      }
+    }
+    
+    res.status(statusCode).json({
       success: false,
-      message: 'Failed to create portal',
-      error: error.message
+      message: errorMessage,
+      error: error.message,
+      details: process.env.NODE_ENV === 'development' ? error.stack : undefined
     });
   }
 });
@@ -287,13 +441,68 @@ router.put('/portals/:id', async (req, res) => {
     const { id } = req.params;
     const updates = req.body;
 
+    console.log('🔍 BACKEND: PUT /api/admin/portals/:id - Portal ID:', id);
+    console.log('📦 BACKEND: Request body keys:', Object.keys(updates));
+    console.log('📦 BACKEND: Request body:', JSON.stringify(updates, null, 2));
+
     // Remove fields that shouldn't be updated directly
     delete updates.id;
     delete updates.api_key; // Use regenerate-key endpoint instead
     delete updates.created_at;
+    delete updates.auto_activate; // Convert to status instead
+    delete updates._schema_fields; // Internal field, don't send to DB
+    delete updates.schema_fields; // Schema fields handled separately
+
+    // Handle auto_activate -> status conversion
+    if (req.body.auto_activate !== undefined) {
+      updates.portal_status = req.body.auto_activate ? 'active' : 'inactive';
+      console.log('✅ BACKEND: Converted auto_activate to portal_status:', updates.portal_status);
+    }
+
+    // Handle status field - normalize to portal_status
+    if (updates.status && !updates.portal_status) {
+      updates.portal_status = updates.status;
+      delete updates.status;
+      console.log('✅ BACKEND: Converted status to portal_status:', updates.portal_status);
+    }
+
+    // Handle slug -> portal_slug mapping
+    if (updates.slug && !updates.portal_slug) {
+      updates.portal_slug = updates.slug;
+      delete updates.slug;
+      console.log('✅ BACKEND: Converted slug to portal_slug:', updates.portal_slug);
+    }
+
+    // Ensure portal_slug is not empty (database requirement)
+    if (updates.portal_slug === '' || updates.portal_slug === null || updates.portal_slug === undefined) {
+      // Generate from portal_code if available
+      if (updates.portal_code) {
+        updates.portal_slug = updates.portal_code.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/^-+|-+$/g, '');
+        console.log('✅ BACKEND: Generated portal_slug from portal_code:', updates.portal_slug);
+      } else {
+        // Don't update slug if it would be empty - fetch current value
+        const { data: current } = await supabase.from('portals').select('portal_slug').eq('id', id).single();
+        if (current && current.portal_slug) {
+          updates.portal_slug = current.portal_slug;
+          console.log('✅ BACKEND: Kept existing portal_slug:', updates.portal_slug);
+        } else {
+          delete updates.portal_slug; // Don't update if we can't generate a valid one
+          console.log('⚠️ BACKEND: Skipping portal_slug update (would be empty)');
+        }
+      }
+    }
+
+    // Remove schema_fields from main update - handle separately if needed
+    const schemaFields = updates.schema_fields || req.body.schema_fields;
+    if (schemaFields) {
+      delete updates.schema_fields;
+      console.log('📋 BACKEND: Extracted schema_fields for separate handling');
+    }
 
     // Update portal
     updates.updated_at = new Date().toISOString();
+
+    console.log('📤 BACKEND: Final update payload:', JSON.stringify(updates, null, 2));
 
     const { data, error } = await supabase
       .from('portals')
@@ -302,14 +511,23 @@ router.put('/portals/:id', async (req, res) => {
       .select()
       .single();
 
-    if (error) throw error;
+    if (error) {
+      console.error('❌ BACKEND: Supabase update error:', error);
+      console.error('❌ BACKEND: Error code:', error.code);
+      console.error('❌ BACKEND: Error message:', error.message);
+      console.error('❌ BACKEND: Error details:', error.details);
+      throw error;
+    }
     
     if (!data) {
+      console.log('❌ BACKEND: Portal not found after update');
       return res.status(404).json({
         success: false,
         message: 'Portal not found'
       });
     }
+
+    console.log('✅ BACKEND: Portal updated successfully');
 
     res.json({
       success: true,
@@ -319,11 +537,13 @@ router.put('/portals/:id', async (req, res) => {
       }
     });
   } catch (error) {
-    console.error('Error updating portal:', error);
+    console.error('❌ BACKEND: Error updating portal:', error);
+    console.error('❌ BACKEND: Error stack:', error.stack);
     res.status(500).json({
       success: false,
       message: 'Failed to update portal',
-      error: error.message
+      error: error.message,
+      details: process.env.NODE_ENV === 'development' ? error.details : undefined
     });
   }
 });
