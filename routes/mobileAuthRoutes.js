@@ -10,6 +10,7 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const supabase = require('../config/supabaseClient');
 const { authenticateAgency, generateAgencyToken } = require('../middleware/agencyAuth');
+const notificationService = require('../services/notificationService');
 
 // JWT secret from environment
 const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key-change-in-production';
@@ -98,26 +99,56 @@ async function ensureUserAccount(email, name, passwordHash) {
  * }
  */
 router.post('/register', async (req, res) => {
+  // Log immediately when route is hit
+  console.log('\n========================================');
+  console.log('🔵 REGISTRATION REQUEST RECEIVED');
+  console.log('🔵 Time:', new Date().toISOString());
+  console.log('🔵 Method:', req.method);
+  console.log('🔵 URL:', req.url);
+  console.log('🔵 Request body:', JSON.stringify(req.body, null, 2));
+  console.log('========================================\n');
+  
   try {
     const {
       business_name,
       email,
       password,
-  phone_number,
-  contact_name,
+      phone_number,
+      contact_name,
       industry,
       zipcodes = [],
       plan_id,
       payment_method_id
     } = req.body;
 
+    console.log('🔵 Parsed request data:', { 
+      email, 
+      business_name, 
+      hasPassword: !!password,
+      hasPlanId: !!plan_id,
+      zipcodesCount: zipcodes?.length || 0
+    });
+
     // Validation
     if (!business_name || !email || !password) {
+      console.log('❌ Validation failed: missing required fields');
+      console.log('❌ Missing:', {
+        business_name: !business_name,
+        email: !email,
+        password: !password
+      });
       return res.status(400).json({
         success: false,
-        message: 'Business name, email, and password are required'
+        message: 'Business name, email, and password are required',
+        missing_fields: {
+          business_name: !business_name,
+          email: !email,
+          password: !password
+        }
       });
     }
+    
+    console.log('✅ Validation passed');
 
     // Get default plan if not provided
     let selectedPlanId = plan_id;
@@ -158,42 +189,128 @@ router.post('/register', async (req, res) => {
       });
     }
 
-    // Hash password
+    // Hash password BEFORE creating agency
+    console.log('🔵 Hashing password...');
     const hashedPassword = await bcrypt.hash(password, 10);
+    console.log('✅ Password hashed successfully');
 
-    // Create agency - use ONLY columns that actually exist in the database
-    // Based on actual schema: agency_name, email, status, industry, verification_status, created_date, updated_at
+    // Create agency - include ALL required fields
+    // Required: business_name, email, password_hash (from Sequelize model)
     let createdAgencyRow = null;
-    let insertError = null;
     
     const now = new Date();
     const today = now.toISOString().split('T')[0]; // Format: YYYY-MM-DD for created_date
     
-    // Use ONLY the columns that actually exist in the database
+    // Build agency data with required fields first
     const agencyData = {
-      agency_name: business_name,  // Use agency_name (confirmed exists)
-      email: email,
-      status: 'PENDING',           // Start as PENDING
+      // REQUIRED FIELDS (NOT NULL in database)
+      business_name: business_name,  // REQUIRED - primary name field
+      email: email.trim().toLowerCase(),  // REQUIRED - must be unique
+      password_hash: hashedPassword,  // REQUIRED - for authentication
+      
+      // OPTIONAL BUT RECOMMENDED FIELDS
+      agency_name: business_name,  // Alias for business_name (if column exists)
+      phone_number: phone_number || null,
+      status: 'PENDING',  // Start as PENDING, will activate after creation
       industry: industry || 'general',
-      verification_status: 'NOT VERIFIED',  // Match existing data format
-      created_date: today,         // Use created_date (NOT created_at)
+      verification_status: 'NOT VERIFIED',
+      is_active: true,  // Set to active
+      
+      // TIMESTAMP FIELDS
+      created_date: today,  // Use created_date if it exists
+      created_at: now.toISOString(),  // Also set created_at (standard)
       updated_at: now.toISOString()
     };
     
-    console.log('Creating agency with columns:', Object.keys(agencyData).join(', '));
+    console.log('🔵 Creating agency with columns:', Object.keys(agencyData).join(', '));
+    console.log('🔵 Agency data:', JSON.stringify(agencyData, null, 2));
     
-    const creation = await supabase
-      .from('agencies')
-      .insert([agencyData])
-      .select('*')
-      .single();
+    let creation;
+    try {
+      // Try full insert first
+      creation = await supabase
+        .from('agencies')
+        .insert([agencyData])
+        .select('*')
+        .single();
 
-    if (creation.error) {
-      insertError = creation.error;
-      console.error('Error creating agency:', insertError);
-    } else {
+      if (creation.error) {
+        console.error('❌ Supabase error creating agency (full data):', JSON.stringify(creation.error, null, 2));
+        console.error('❌ Error code:', creation.error.code);
+        console.error('❌ Error message:', creation.error.message);
+        console.error('❌ Error details:', creation.error.details);
+        console.error('❌ Error hint:', creation.error.hint);
+        
+        // If error is about missing column, try with minimal required fields only
+        if (creation.error.code === '42703' || creation.error.message?.includes('column') || creation.error.message?.includes('does not exist')) {
+          console.log('⚠️ Trying with minimal required fields only...');
+          
+          const minimalAgencyData = {
+            business_name: business_name,
+            email: email.trim().toLowerCase(),
+            password_hash: hashedPassword,
+            status: 'PENDING',
+            created_at: now.toISOString(),
+            updated_at: now.toISOString()
+          };
+          
+          console.log('🔵 Retrying with minimal data:', Object.keys(minimalAgencyData).join(', '));
+          
+          const retryCreation = await supabase
+            .from('agencies')
+            .insert([minimalAgencyData])
+            .select('*')
+            .single();
+          
+          if (retryCreation.error) {
+            console.error('❌ Retry also failed:', JSON.stringify(retryCreation.error, null, 2));
+            const errorResponse = {
+              success: false,
+              message: 'Failed to create agency',
+              error: retryCreation.error.message || creation.error.message || 'Unknown error creating agency',
+              attemptedFields: Object.keys(agencyData),
+              retryFields: Object.keys(minimalAgencyData)
+            };
+            
+            if (retryCreation.error.code) errorResponse.code = retryCreation.error.code;
+            if (retryCreation.error.details) errorResponse.details = retryCreation.error.details;
+            if (retryCreation.error.hint) errorResponse.hint = retryCreation.error.hint;
+            
+            console.error('❌ Sending error response:', JSON.stringify(errorResponse, null, 2));
+            return res.status(500).json(errorResponse);
+          }
+          
+          // Retry succeeded!
+          creation = retryCreation;
+          console.log('✅ Agency created with minimal fields');
+        } else {
+          // Other error - return it
+          const errorResponse = {
+            success: false,
+            message: 'Failed to create agency',
+            error: creation.error.message || 'Unknown error creating agency'
+          };
+          
+          if (creation.error.code) errorResponse.code = creation.error.code;
+          if (creation.error.details) errorResponse.details = creation.error.details;
+          if (creation.error.hint) errorResponse.hint = creation.error.hint;
+          
+          console.error('❌ Sending error response:', JSON.stringify(errorResponse, null, 2));
+          return res.status(500).json(errorResponse);
+        }
+      }
+      
+      if (!creation.data) {
+        console.error('❌ No agency data returned from insert');
+        return res.status(500).json({
+          success: false,
+          message: 'Failed to create agency',
+          error: 'No agency data returned from database'
+        });
+      }
+      
       createdAgencyRow = creation.data;
-      console.log('✅ Agency created successfully');
+      console.log('✅ Agency created successfully:', createdAgencyRow.id);
       
       // Try to activate the account (PENDING -> ACTIVE)
       try {
@@ -210,30 +327,60 @@ router.post('/register', async (req, res) => {
         if (activateResult.data) {
           createdAgencyRow = activateResult.data;
           console.log('✅ Agency activated successfully');
+        } else if (activateResult.error) {
+          console.warn('⚠️ Could not activate agency:', activateResult.error.message);
         }
       } catch (activateErr) {
-        console.warn('Could not activate agency after creation (will remain PENDING):', activateErr.message);
+        console.warn('⚠️ Could not activate agency after creation (will remain PENDING):', activateErr.message);
         // Continue - agency was created successfully
       }
-    }
-
-    if (insertError) {
-      console.error('Error creating agency:', insertError);
+    } catch (insertErr) {
+      console.error('❌ Exception during insert:', insertErr);
+      console.error('❌ Insert error stack:', insertErr.stack);
       return res.status(500).json({
         success: false,
         message: 'Failed to create agency',
-        error: insertError.message
+        error: insertErr.message || 'Exception during database insert',
+        errorType: insertErr.name || 'Error'
+      });
+    }
+    
+    if (!createdAgencyRow) {
+      console.error('❌ createdAgencyRow is null after insert attempt');
+      return res.status(500).json({
+        success: false,
+        message: 'Failed to create agency',
+        error: 'Agency creation returned no data'
       });
     }
 
   const normalizedNewAgency = normalizeAgencyRow(createdAgencyRow);
+  
+  if (!normalizedNewAgency || !normalizedNewAgency.id) {
+    console.error('❌ Failed to normalize agency row or missing ID');
+    console.error('❌ createdAgencyRow:', JSON.stringify(createdAgencyRow, null, 2));
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to create agency',
+      error: 'Agency created but could not be normalized',
+      details: 'Missing agency ID after creation'
+    });
+  }
 
   // Ensure a fallback user account exists for password auth
-  await ensureUserAccount(email, contact_name || business_name, hashedPassword);
+  try {
+    console.log('🔵 Ensuring user account exists...');
+    await ensureUserAccount(email, contact_name || business_name, hashedPassword);
+    console.log('✅ User account ensured');
+  } catch (userErr) {
+    console.warn('⚠️ Warning: Could not ensure user account:', userErr.message);
+    // Don't fail registration if user account creation fails
+  }
 
     // Create subscription (only if we have a plan)
     let subscription = null;
     if (selectedPlanId) {
+      console.log('🔵 Creating subscription with plan_id:', selectedPlanId);
       const now = new Date();
       const trialEnd = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000);
       const nextBilling = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
@@ -255,10 +402,13 @@ router.post('/register', async (req, res) => {
         .single();
 
       if (subscriptionError) {
-        console.error('Error creating subscription:', subscriptionError);
+        console.error('❌ Error creating subscription:', JSON.stringify(subscriptionError, null, 2));
+        console.error('❌ Subscription error code:', subscriptionError.code);
+        console.error('❌ Subscription error message:', subscriptionError.message);
         // Don't fail registration, just log
       } else {
         subscription = subscriptionData;
+        console.log('✅ Subscription created successfully:', subscription.id);
         // Mirror to agency_subscriptions used by the admin portal list
         try {
           // Normalize agency_id - handle both id and agency_id columns
@@ -300,28 +450,39 @@ router.post('/register', async (req, res) => {
 
     // Add territories (zipcodes)
     if (Array.isArray(zipcodes) && zipcodes.length > 0 && subscription) {
-      const territoryInserts = zipcodes.map(zipcode => ({
-        subscription_id: subscription.id,
-        agency_id: normalizedNewAgency.id,
-        type: 'zipcode',
-        value: zipcode,
-        state: 'USA', // Default, should be validated
-        is_active: true
-      }));
+      try {
+        console.log('🔵 Adding territories:', zipcodes.length);
+        const territoryInserts = zipcodes.map(zipcode => ({
+          subscription_id: subscription.id,
+          agency_id: normalizedNewAgency.id,
+          type: 'zipcode',
+          value: zipcode,
+          state: 'USA', // Default, should be validated
+          is_active: true
+        }));
 
-      const { error: territoryError } = await supabase
-        .from('territories')
-        .insert(territoryInserts);
+        const { error: territoryError } = await supabase
+          .from('territories')
+          .insert(territoryInserts);
 
-      if (territoryError) {
-        console.error('Error adding territories:', territoryError);
+        if (territoryError) {
+          console.error('❌ Error adding territories:', JSON.stringify(territoryError, null, 2));
+          // Don't fail registration if territories fail
+        } else {
+          console.log('✅ Territories added successfully');
+        }
+      } catch (territoryErr) {
+        console.warn('⚠️ Warning: Could not add territories:', territoryErr.message);
+        // Don't fail registration if territories fail
       }
     }
 
     // Generate JWT token
+    console.log('🔵 Generating JWT token for agency:', normalizedNewAgency.id);
     const token = generateToken(normalizedNewAgency.id, normalizedNewAgency.email, normalizedNewAgency.business_name);
+    console.log('✅ Token generated successfully');
 
-    res.status(201).json({
+    const responseData = {
       success: true,
       message: 'Agency registered successfully',
       data: {
@@ -337,15 +498,103 @@ router.post('/register', async (req, res) => {
       },
       token,
       expires_in: JWT_EXPIRES_IN
-    });
+    };
+
+    console.log('\n✅ ========================================');
+    console.log('✅ REGISTRATION SUCCESSFUL');
+    console.log('✅ Agency ID:', normalizedNewAgency.id);
+    console.log('✅ Email:', normalizedNewAgency.email);
+    console.log('✅ Has Subscription:', !!subscription);
+    console.log('✅ Sending response...');
+    console.log('✅ ========================================\n');
+
+    // Send verification notification after successful registration and subscription
+    if (subscription) {
+      try {
+        console.log('🔵 Sending verification notification...');
+        
+        // Save notification to database
+        await supabase.from('notifications').insert({
+          agency_id: normalizedNewAgency.id,
+          title: 'Verify Your Agency',
+          message: 'Verify your agency/company to get leads. Upload your verification document to start receiving leads.',
+          type: 'verification_required',
+          is_read: false,
+          created_at: new Date().toISOString()
+        });
+
+        // Send push notification if device is registered
+        await notificationService.sendPushNotification(normalizedNewAgency.id, {
+          title: 'Verify Your Agency',
+          body: 'Verify your agency/company to get leads. Upload your verification document to start receiving leads.',
+          type: 'verification_required',
+          data: {
+            action: 'upload_document',
+            agency_id: normalizedNewAgency.id
+          }
+        });
+
+        console.log('✅ Verification notification sent');
+      } catch (notifErr) {
+        console.warn('⚠️ Could not send verification notification:', notifErr.message);
+        // Don't fail registration if notification fails
+      }
+    }
+
+    res.status(201).json(responseData);
 
   } catch (error) {
-    console.error('Registration error:', error);
-    res.status(500).json({
+    console.error('\n❌ ========================================');
+    console.error('❌ REGISTRATION ERROR (Catch Block)');
+    console.error('❌ Error message:', error.message);
+    console.error('❌ Error name:', error.name);
+    console.error('❌ Error code:', error.code);
+    console.error('❌ Error details:', error.details);
+    console.error('❌ Error hint:', error.hint);
+    console.error('❌ Error stack:', error.stack);
+    console.error('❌ Full error object:', JSON.stringify(error, Object.getOwnPropertyNames(error), 2));
+    console.error('❌ ========================================\n');
+    
+    // Build detailed error response
+    const errorResponse = {
       success: false,
       message: 'Registration failed',
-      error: error.message
-    });
+      error: error.message || 'Unknown error occurred',
+      errorType: error.name || 'Error'
+    };
+    
+    // Add database-specific error details
+    if (error.code) {
+      errorResponse.code = error.code;
+      // Map common PostgreSQL error codes to user-friendly messages
+      if (error.code === '23502') {
+        errorResponse.message = 'Missing required field in database';
+        errorResponse.field = error.column || 'unknown';
+      } else if (error.code === '23505') {
+        errorResponse.message = 'Email already exists';
+      } else if (error.code === '23503') {
+        errorResponse.message = 'Invalid reference (foreign key constraint)';
+      } else if (error.code === '42703') {
+        errorResponse.message = 'Database column does not exist';
+      }
+    }
+    
+    if (error.details) errorResponse.details = error.details;
+    if (error.hint) errorResponse.hint = error.hint;
+    if (process.env.NODE_ENV === 'development') {
+      errorResponse.stack = error.stack;
+    }
+    
+    errorResponse.timestamp = new Date().toISOString();
+    
+    console.error('❌ Sending error response:', JSON.stringify(errorResponse, null, 2));
+    
+    // Make sure response hasn't been sent already
+    if (!res.headersSent) {
+      res.status(500).json(errorResponse);
+    } else {
+      console.error('❌ WARNING: Response already sent, cannot send error response');
+    }
   }
 });
 

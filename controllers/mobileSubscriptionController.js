@@ -4,6 +4,7 @@
  */
 
 const supabase = require('../config/supabaseClient');
+const notificationService = require('../services/notificationService');
 
 const ACTIVE_SUBSCRIPTION_STATUSES = ['trial', 'active', 'suspended'];
 const BILLING_ELIGIBLE_STATUSES = ['trial', 'active'];
@@ -582,6 +583,47 @@ exports.subscribe = async (req, res) => {
       status: 'completed',
       transaction_date: now.toISOString()
     });
+
+    // Send verification notification after subscription purchase
+    try {
+      console.log('🔵 Sending verification notification after subscription purchase...');
+      
+      // Check if agency is already verified
+      const { data: agency } = await supabase
+        .from('agencies')
+        .select('verification_status, is_verified')
+        .eq('id', agencyId)
+        .single();
+
+      // Only send notification if not verified
+      if (!agency?.is_verified && agency?.verification_status !== 'VERIFIED') {
+        // Save notification to database
+        await supabase.from('notifications').insert({
+          agency_id: agencyId,
+          title: 'Verify Your Agency',
+          message: 'Verify your agency/company to get leads. Upload your verification document to start receiving leads.',
+          type: 'verification_required',
+          is_read: false,
+          created_at: new Date().toISOString()
+        });
+
+        // Send push notification if device is registered
+        await notificationService.sendPushNotification(agencyId, {
+          title: 'Verify Your Agency',
+          body: 'Verify your agency/company to get leads. Upload your verification document to start receiving leads.',
+          type: 'verification_required',
+          data: {
+            action: 'upload_document',
+            agency_id: agencyId
+          }
+        });
+
+        console.log('✅ Verification notification sent after subscription purchase');
+      }
+    } catch (notifErr) {
+      console.warn('⚠️ Could not send verification notification:', notifErr.message);
+      // Don't fail subscription if notification fails
+    }
 
     res.status(201).json({
       success: true,

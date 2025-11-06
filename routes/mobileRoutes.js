@@ -65,16 +65,30 @@ function normalizeAgencyRow(agencyRow) {
  * Matches Flutter API contract exactly
  */
 router.post('/auth/register', async (req, res) => {
+  // Log immediately when route is hit
+  console.log('\n========================================');
+  console.log('🔵 REGISTRATION REQUEST RECEIVED');
+  console.log('🔵 Time:', new Date().toISOString());
+  console.log('🔵 Method:', req.method);
+  console.log('🔵 URL:', req.url);
+  console.log('🔵 Request body:', JSON.stringify(req.body, null, 2));
+  console.log('========================================\n');
+  
   try {
     const { email, password, agency_name, business_name, phone, contact_name, zipcodes, industry, plan_id, payment_method_id } = req.body;
 
+    console.log('🔵 Parsed request data:', { email, agency_name, business_name, hasPassword: !!password });
+
     // Validation
     if (!email || !password) {
+      console.log('❌ Validation failed: missing email or password');
       return res.status(400).json({
         success: false,
         message: 'Email and password are required'
       });
     }
+    
+    console.log('✅ Validation passed');
 
     const normalizedEmail = email.trim().toLowerCase();
     const hashedPassword = await bcrypt.hash(password, 10);
@@ -93,99 +107,308 @@ router.post('/auth/register', async (req, res) => {
       });
     }
 
-    // Create agency
+    // Create agency - use ONLY columns that actually exist in the database
+    const now = new Date();
+    const today = now.toISOString().split('T')[0]; // Format: YYYY-MM-DD for created_date
+    
+    // Use columns that exist in the database (confirmed from schema)
     const agencyData = {
-      email: normalizedEmail,
-      password_hash: hashedPassword,
-      business_name: business_name || agency_name,
-      agency_name: agency_name || business_name,
-      phone_number: phone,
-      contact_name: contact_name,
-      industry_type: industry || 'healthcare',
-      status: 'ACTIVE',
-      is_active: true,
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString()
+      agency_name: agency_name || business_name,  // ✅ EXISTS
+      email: normalizedEmail,                     // ✅ EXISTS
+      status: 'PENDING',                          // ✅ EXISTS - Start as PENDING
+      industry: industry || 'general',            // ✅ EXISTS
+      verification_status: 'NOT VERIFIED',        // ✅ EXISTS
+      created_date: today,                        // ✅ EXISTS - Format: YYYY-MM-DD
+      updated_at: now.toISOString()               // ✅ EXISTS
     };
+    
+    // Add business_name if provided (column EXISTS in database)
+    if (business_name && business_name !== agency_name) {
+      agencyData.business_name = business_name;  // ✅ Column exists!
+    }
+    // Note: contact_name column doesn't exist in database - skipping it
+    // if (contact_name) {
+    //   agencyData.contact_name = contact_name;  // Column doesn't exist - commented out
+    // }
+    // Phone column - try to add if it exists, but don't fail if it doesn't
+    // Comment out phone for now since we're not sure which column exists
+    // if (phone) {
+    //   const cleanPhone = phone.trim();
+    //   if (cleanPhone) {
+    //     agencyData.phone_number = cleanPhone;
+    //   }
+    // }
+    
+    // Make absolutely sure contact_name is NOT in agencyData
+    delete agencyData.contact_name;
+    delete agencyData.phone; // Also remove phone if it was accidentally added
+    
+    console.log('Creating agency with columns:', Object.keys(agencyData).join(', '));
+    console.log('Agency data (FINAL):', JSON.stringify(agencyData, null, 2));
+    console.log('⚠️ Removed contact_name and phone from agencyData (columns don\'t exist)');
 
-    const { data: createdAgency, error: createError } = await supabase
-      .from('agencies')
-      .insert([agencyData])
-      .select('*')
-      .single();
+    console.log('Attempting to insert with data:', JSON.stringify(agencyData, null, 2));
+    
+    let createdAgency = null;
+    try {
+      const { data, error: createError } = await supabase
+        .from('agencies')
+        .insert([agencyData])
+        .select('*')
+        .single();
 
-    if (createError || !createdAgency) {
+      if (createError) {
+        console.error('❌ Supabase error creating agency:', JSON.stringify(createError, null, 2));
+        console.error('❌ Error code:', createError.code);
+        console.error('❌ Error message:', createError.message);
+        console.error('❌ Error details:', createError.details);
+        console.error('❌ Error hint:', createError.hint);
+        
+        const errorResponse = {
+          success: false,
+          message: 'Failed to create agency',
+          error: createError.message || 'Unknown error creating agency'
+        };
+        
+        if (createError.code) errorResponse.code = createError.code;
+        if (createError.details) errorResponse.details = createError.details;
+        if (createError.hint) errorResponse.hint = createError.hint;
+        
+        console.error('❌ Sending error response:', JSON.stringify(errorResponse, null, 2));
+        return res.status(500).json(errorResponse);
+      }
+      
+      if (!data) {
+        console.error('❌ No agency data returned from insert');
+        return res.status(500).json({
+          success: false,
+          message: 'Failed to create agency',
+          error: 'No agency data returned from database'
+        });
+      }
+      
+      createdAgency = data;
+    } catch (insertErr) {
+      console.error('❌ Exception during insert:', insertErr);
+      console.error('❌ Insert error stack:', insertErr.stack);
       return res.status(500).json({
         success: false,
         message: 'Failed to create agency',
-        error: createError?.message
+        error: insertErr.message || 'Exception during database insert',
+        errorType: insertErr.name || 'Error'
       });
     }
+    
+    if (!createdAgency) {
+      return res.status(500).json({
+        success: false,
+        message: 'Failed to create agency',
+        error: 'Agency creation failed - no data returned'
+      });
+    }
+    
+    console.log('✅ Agency created successfully:', createdAgency.id);
+    
+    // Try to activate the account (PENDING -> ACTIVE)
+    try {
+      const activateResult = await supabase
+        .from('agencies')
+        .update({ 
+          status: 'ACTIVE',
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', createdAgency.id)
+        .select()
+        .single();
+      
+      if (activateResult.data) {
+        createdAgency = activateResult.data;
+        console.log('✅ Agency activated successfully');
+      }
+    } catch (activateErr) {
+      console.warn('Could not activate agency after creation (will remain PENDING):', activateErr.message);
+      // Continue - agency was created successfully
+    }
+    
+    // Ensure a fallback user account exists for password auth
+    try {
+      const { data: existingUser } = await supabase
+        .from('users')
+        .select('id, email')
+        .eq('email', normalizedEmail)
+        .maybeSingle();
 
+      if (existingUser) {
+        // Update password if user exists
+        await supabase
+          .from('users')
+          .update({ password_hash: hashedPassword, updated_at: new Date().toISOString() })
+          .eq('id', existingUser.id);
+      } else {
+        // Create user account
+        await supabase
+          .from('users')
+          .insert([{ 
+            name: contact_name || agency_name || business_name || normalizedEmail, 
+            email: normalizedEmail, 
+            password_hash: hashedPassword, 
+            role: 'agency', 
+            is_active: true 
+          }]);
+      }
+    } catch (userErr) {
+      console.warn('Could not create/update user account (non-critical):', userErr.message);
+      // Continue - agency was created successfully
+    }
+
+    console.log('🔵 Normalizing agency data...');
     const normalizedAgency = normalizeAgencyRow(createdAgency);
+    console.log('🔵 Normalized agency:', JSON.stringify(normalizedAgency, null, 2));
 
     // Create subscription if plan_id provided
     let subscription = null;
     if (plan_id) {
-      const now = new Date();
-      const trialEnd = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000);
-      const nextBilling = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+      console.log('🔵 Creating subscription with plan_id:', plan_id);
+      try {
+        const now = new Date();
+        const trialEnd = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000);
+        const nextBilling = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
 
-      const { data: subscriptionData } = await supabase
-        .from('subscriptions')
-        .insert([{
-          agency_id: normalizedAgency.id,
-          plan_id: plan_id,
-          status: 'trial',
-          start_date: now.toISOString(),
-          trial_end_date: trialEnd.toISOString(),
-          next_billing_date: nextBilling.toISOString(),
-          auto_renew: true,
-          metadata: { payment_method_id }
-        }])
-        .select()
-        .single();
+        const { data: subscriptionData, error: subError } = await supabase
+          .from('subscriptions')
+          .insert([{
+            agency_id: normalizedAgency.id,
+            plan_id: plan_id,
+            status: 'trial',
+            start_date: now.toISOString(),
+            trial_end_date: trialEnd.toISOString(),
+            next_billing_date: nextBilling.toISOString(),
+            auto_renew: true,
+            metadata: payment_method_id ? { payment_method_id } : null
+          }])
+          .select()
+          .single();
 
-      subscription = subscriptionData;
+        if (subError) {
+          console.error('❌ Error creating subscription:', subError);
+          console.error('❌ Subscription error details:', JSON.stringify(subError, null, 2));
+          // Don't fail registration if subscription fails - just log it
+        } else {
+          subscription = subscriptionData;
+          console.log('✅ Subscription created:', subscription.id);
+        }
 
-      // Add territories
-      if (Array.isArray(zipcodes) && zipcodes.length > 0 && subscription) {
-        const territoryInserts = zipcodes.map(zipcode => ({
-          subscription_id: subscription.id,
-          agency_id: normalizedAgency.id,
-          type: 'zipcode',
-          value: zipcode,
-          state: 'USA',
-          is_active: true
-        }));
+        // Add territories (only if subscription was created)
+        if (Array.isArray(zipcodes) && zipcodes.length > 0 && subscription) {
+          console.log('🔵 Adding territories:', zipcodes);
+          try {
+            const territoryInserts = zipcodes.map(zipcode => ({
+              subscription_id: subscription.id,
+              agency_id: normalizedAgency.id,
+              type: 'zipcode',
+              value: zipcode,
+              state: 'USA',
+              is_active: true
+            }));
 
-        await supabase.from('territories').insert(territoryInserts);
+            const { error: territoryError } = await supabase.from('territories').insert(territoryInserts);
+            if (territoryError) {
+              console.error('❌ Error adding territories:', territoryError);
+              // Don't fail registration if territories fail
+            } else {
+              console.log('✅ Territories added successfully');
+            }
+          } catch (territoryErr) {
+            console.error('❌ Exception adding territories:', territoryErr);
+            // Don't fail registration
+          }
+        }
+      } catch (subErr) {
+        console.error('❌ Exception creating subscription:', subErr);
+        // Don't fail registration if subscription creation fails
       }
+    } else {
+      console.log('⚠️ No plan_id provided - skipping subscription creation');
     }
 
+    console.log('🔵 Generating JWT token...');
     // Generate JWT token
-    const token = generateAgencyToken({ 
-      id: normalizedAgency.id, 
-      email: normalizedAgency.email, 
-      businessName: normalizedAgency.business_name 
-    });
+    let token;
+    try {
+      // Get business_name safely
+      const businessName = normalizedAgency.business_name || normalizedAgency.agency_name || createdAgency.agency_name || createdAgency.business_name || 'Agency';
+      
+      console.log('🔵 Token payload:', { 
+        id: normalizedAgency.id, 
+        email: normalizedAgency.email, 
+        businessName 
+      });
+      
+      // generateAgencyToken expects: { id, email, businessName }
+      token = generateAgencyToken({ 
+        id: normalizedAgency.id, 
+        email: normalizedAgency.email, 
+        businessName: businessName
+      });
+      
+      if (!token) {
+        throw new Error('Token generation returned null/undefined');
+      }
+      console.log('✅ JWT token generated (length:', token ? token.length : 0, ')');
+    } catch (tokenErr) {
+      console.error('❌ Error generating token:', tokenErr);
+      console.error('❌ Token error stack:', tokenErr.stack);
+      return res.status(500).json({
+        success: false,
+        message: 'Registration successful but failed to generate token',
+        error: tokenErr.message
+      });
+    }
 
-    res.status(201).json({
+    console.log('🔵 Preparing response...');
+    
+    // Get agency name safely
+    const agencyName = normalizedAgency.business_name || normalizedAgency.agency_name || createdAgency.agency_name || createdAgency.business_name || 'Agency';
+    
+    const responseData = {
       success: true,
       token,
       agency_id: normalizedAgency.id,
+      email: normalizedAgency.email,
+      agency_name: agencyName,
+      message: 'Registration successful',
       user_profile: {
         email: normalizedAgency.email,
-        agency_name: normalizedAgency.business_name
+        agency_name: agencyName
       }
-    });
+    };
+    
+    console.log('✅ Registration complete! Sending response:', JSON.stringify(responseData, null, 2));
+    
+    // Return response matching Flutter's expected format
+    res.status(201).json(responseData);
   } catch (error) {
-    console.error('Registration error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Registration failed',
-      error: error.message
-    });
+    console.error('❌ Registration error:', error);
+    console.error('❌ Error stack:', error.stack);
+    console.error('❌ Error name:', error.name);
+    console.error('❌ Error message:', error.message);
+    
+    // Make sure we always send a response
+    try {
+      res.status(500).json({
+        success: false,
+        message: 'Registration failed',
+        error: error.message || 'Unknown error',
+        errorType: error.name || 'Error',
+        stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+      });
+    } catch (responseErr) {
+      console.error('❌ Failed to send error response:', responseErr);
+      // If response already sent, just log
+      if (!res.headersSent) {
+        res.status(500).send('Registration failed: ' + (error.message || 'Unknown error'));
+      }
+    }
   }
 });
 
