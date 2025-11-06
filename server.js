@@ -17,6 +17,27 @@ const path = require('path');
 const fs = require('fs');
 const { performanceMonitor, errorTracker, getHealthData } = require('./middleware/observability');
 
+
+app.use(express.json());
+
+// ✅ Allow CORS from your external portal
+app.use(
+  cors({
+    origin: [
+      'https://real-estate-portal-oh6c.onrender.com', // your deployed external portal
+      'http://localhost:5500' // allow local testing too
+    ],
+    methods: ['GET', 'POST', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'x-api-key'],
+  })
+);
+
+// Parse incoming requests
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+
+
+
 // Import services for webhook processing (moved to webhook handler to avoid circular dependencies)
 
 // Load environment variables from config.env (try multiple locations)
