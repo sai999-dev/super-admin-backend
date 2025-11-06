@@ -1463,7 +1463,7 @@ app.post('/api/webhooks/:portal_code', async (req, res) => {
   const startTime = Date.now();
 
   try {
-    // Step 1: Authenticate webhook (00:00.150)
+    // ✅ Step 1: Authenticate webhook
     if (!apiKey) {
       await auditService.logWebhook(null, portal_code, req.body, 'failed', 'Missing API key');
       return res.status(401).json({ success: false, message: 'Missing API key' });
@@ -1486,15 +1486,14 @@ app.post('/api/webhooks/:portal_code', async (req, res) => {
       return res.status(403).json({ success: false, message: 'Portal is not active' });
     }
 
-    // Step 2: Log webhook reception (00:00.200)
+    // ✅ Step 2: Log webhook reception
     await auditService.logWebhook(portal.id, portal_code, req.body, 'success', 'Webhook received');
 
-    // Step 3: Transform data (00:00.300)
+    // ✅ Step 3: Transform data
     const transformedData = leadIngestionService.transformData(req.body, portal);
 
-    // Step 4: Validate (00:00.350)
+    // ✅ Step 4: Validate
     const validation = leadIngestionService.validate(transformedData);
-
     if (!validation.valid) {
       await auditService.log({
         action: 'lead_validation_failed',
@@ -1511,7 +1510,7 @@ app.post('/api/webhooks/:portal_code', async (req, res) => {
       });
     }
 
-    // Step 5: Process lead ingestion (create lead) (00:00.450)
+    // ✅ Step 5: Process lead ingestion
     const leadResult = await leadIngestionService.processLead(req.body, portal);
 
     if (!leadResult.success) {
@@ -1531,11 +1530,10 @@ app.post('/api/webhooks/:portal_code', async (req, res) => {
 
     const leadId = leadResult.lead_id;
 
-    // Log lead creation
+    // ✅ Log lead creation
     await auditService.logLeadCreation(leadId, portal.id, transformedData);
 
-    // Step 6: Automatically distribute lead (00:00.550-00:00.650)
-    // Get the created lead for distribution
+    // ✅ Step 6: Try to distribute lead automatically
     const { data: createdLead, error: leadFetchError } = await supabase
       .from('leads')
       .select('*')
@@ -1543,53 +1541,63 @@ app.post('/api/webhooks/:portal_code', async (req, res) => {
       .single();
 
     if (!leadFetchError && createdLead) {
-      // Trigger automatic distribution
       const distributionResult = await leadDistributionService.distributeLead(createdLead);
 
       if (distributionResult.success) {
-        // Log assignment
         await auditService.logLeadAssignment(
           leadId,
           distributionResult.agency_id,
           distributionResult.assignment_id
         );
 
-        // Notification already sent by leadDistributionService during distribution
-        // No additional notification needed here
-
         const processingTime = Date.now() - startTime;
         return res.status(200).json({
           success: true,
           message: 'Lead received and distributed successfully',
           data: {
-            lead_id: leadId,
+            lead_uuid: leadId,
+            lead_id: createdLead.lead_id || null,
             assigned_to_agency: distributionResult.agency_id,
             assignment_id: distributionResult.assignment_id,
             processing_time_ms: processingTime
           }
         });
       } else {
-        // Lead created but not distributed (no eligible agencies)
         const processingTime = Date.now() - startTime;
         return res.status(200).json({
           success: true,
           message: 'Lead received successfully but not yet assigned',
           warning: distributionResult.message,
           data: {
-            lead_id: leadId,
+            lead_uuid: leadId,
+            lead_id: createdLead.lead_id || null,
             processing_time_ms: processingTime
           }
         });
       }
     }
 
-    // Lead created but distribution failed or lead not found
+    // ✅ Lead created but distribution failed or not found
+    const { data: createdLeadFull, error: fetchError } = await supabase
+      .from('leads')
+      .select('id, lead_id, lead_name, email, phone_number, created_at')
+      .eq('id', leadId)
+      .single();
+
+    if (fetchError) {
+      console.warn('⚠️ Could not fetch created lead_id:', fetchError.message);
+    }
+
     const processingTime = Date.now() - startTime;
     return res.status(200).json({
       success: true,
       message: 'Lead received successfully',
       data: {
-        lead_id: leadId,
+        lead_uuid: leadId,
+        lead_id: createdLeadFull?.lead_id || null,
+        lead_name: createdLeadFull?.lead_name || null,
+        email: createdLeadFull?.email || null,
+        phone_number: createdLeadFull?.phone_number || null,
         processing_time_ms: processingTime
       }
     });
@@ -1612,6 +1620,7 @@ app.post('/api/webhooks/:portal_code', async (req, res) => {
     });
   }
 });
+
 
 
 
