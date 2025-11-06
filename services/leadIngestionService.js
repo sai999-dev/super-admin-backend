@@ -192,43 +192,50 @@ class LeadIngestionService {
   /**
    * Create lead in Supabase + log to audit_log
    */
-  async createLead(leadData) {
-    const { data: lead, error } = await supabase
+  /**
+ * Create lead in Supabase + log to audit_logs table
+ */
+async createLead(leadData) {
+  try {
+    // 1️⃣ Insert the new lead
+    const { data: lead, error: leadError } = await supabase
       .from('leads')
       .insert([leadData])
       .select()
       .single();
 
-    if (error) {
-      logger.error('Error creating lead:', error);
-      throw new Error(`Failed to create lead: ${error.message}`);
+    if (leadError) {
+      logger.error('❌ Error creating lead:', leadError);
+      throw new Error(`Failed to create lead: ${leadError.message}`);
     }
 
-    // ✅ Log to audit_log
-    try {
-      const auditLog = {
-        lead_id: lead.id, // UUID from leads
-        lead_data: lead,  // Full JSON
-        agency_id: null,  // not assigned yet
-        time_stamp: new Date().toISOString(),
-        action_status: 'created'
-      };
+    logger.info(`✅ Lead created successfully with ID: ${lead.id}`);
 
-      const { error: auditError } = await supabase
-        .from('audit_log')
-        .insert([auditLog]);
+    // 2️⃣ Prepare audit record
+    const auditLog = {
+      lead_id: lead.id,
+      lead_data: lead, // Full JSON object
+      agency_id: null,
+      time_stamp: new Date().toISOString(),
+      action_status: 'created'
+    };
 
-      if (auditError) {
-        logger.warn(`⚠️ Failed to log audit for lead ${lead.id}: ${auditError.message}`);
-      } else {
-        logger.info(`📝 Lead ${lead.id} logged to audit_log successfully`);
-      }
-    } catch (logError) {
-      logger.error('Error while writing to audit_log:', logError.message);
+    // 3️⃣ Insert into audit_logs table
+    const { error: auditError } = await supabase.from('audit_logs').insert([auditLog]);
+
+    if (auditError) {
+      logger.error(`⚠️ Failed to insert into audit_logs: ${auditError.message}`);
+    } else {
+      logger.info(`📝 Lead ${lead.id} successfully logged in audit_logs`);
     }
 
     return lead;
+  } catch (error) {
+    logger.error('💥 Unexpected error in createLead():', error.message);
+    throw error;
   }
+}
+
 }
 
 module.exports = new LeadIngestionService();
