@@ -21,30 +21,30 @@ const app = express();
 
 
 // ✅ Allow CORS from your external portal
-// app.use(
-//   cors({
-//     origin: [
-//       'https://real-estate-portal-oh6c.onrender.com', // your deployed external portal
-//       'http://localhost:5500' // allow local testing too
-//     ],
-//     methods: ['GET', 'POST', 'OPTIONS'],
-//     allowedHeaders: ['Content-Type', 'x-api-key'],
-//   })
-// );
+// ✅ CORS Setup (Render + Local)
+const allowedOrigins = [
+  'https://real-estate-portal-oh6c.onrender.com',
+  'http://localhost:5500'
+];
 
 app.use((req, res, next) => {
-  res.header('Access-Control-Allow-Origin', 'https://real-estate-portal-oh6c.onrender.com');
-  res.header('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
-  res.header('Access-Control-Allow-Headers', 'Content-Type, x-api-key');
-  res.header('Access-Control-Allow-Credentials', 'true');
+  const origin = req.headers.origin;
 
-  // Handle preflight requests
+  if (allowedOrigins.includes(origin)) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+  }
+
+  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, x-api-key');
+  res.setHeader('Access-Control-Allow-Credentials', 'true');
+
   if (req.method === 'OPTIONS') {
-    return res.sendStatus(204);
+    return res.sendStatus(204); // Stop here for preflight
   }
 
   next();
 });
+
 
 
 // Parse incoming requests
