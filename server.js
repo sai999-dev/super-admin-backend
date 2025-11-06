@@ -1152,7 +1152,7 @@ app.post("/api/create-portal", async (req, res) => {
     }
 
     // Generate webhook URL automatically
-    const baseUrl = process.env.BASE_URL || process.env.FRONTEND_URL || `http://localhost:${PORT}`;
+    const baseUrl = process.env.BASE_API_URL || process.env.BASE_URL || process.env.FRONTEND_URL || `http://localhost:${PORT}`;
     const generated_webhook_url = `${baseUrl}/api/webhooks/${portalCode}`;
 
     // Prepare insert data (only include fields that exist in Supabase schema)
@@ -1337,7 +1337,7 @@ app.post("/api/portals", async (req, res) => {
     // Generate unique code, api key, and webhook URL
     const portal_code = body.portal_code || generateSlug(body.portal_name);
     const api_key = generateApiKey();
-    const baseUrl = process.env.BASE_URL || process.env.FRONTEND_URL || `http://localhost:${PORT}`;
+    const baseUrl = process.env.BASE_API_URL || process.env.BASE_URL || process.env.FRONTEND_URL || `http://localhost:${PORT}`;
     const generated_webhook_url = `${baseUrl}/api/webhooks/${portal_code}`;
 
     // Generate portal slug (required by database)
