@@ -16,9 +16,9 @@ const crypto = require('crypto');
 const path = require('path');
 const fs = require('fs');
 const { performanceMonitor, errorTracker, getHealthData } = require('./middleware/observability');
+const app = express();
 
 
-app.use(express.json());
 
 // ✅ Allow CORS from your external portal
 app.use(
@@ -45,7 +45,7 @@ dotenv.config({ path: path.join(__dirname, 'config.env') });
 dotenv.config({ path: path.join(__dirname, '..', 'config.env') });
 dotenv.config(); // Also try default .env location
 
-const app = express();
+
 const PORT = process.env.PORT || 3000;
 const NODE_ENV = process.env.NODE_ENV || 'development';
 
@@ -59,6 +59,9 @@ console.log('🚀 Starting Lead Marketplace Unified Server...');
 console.log(`📝 Environment: ${NODE_ENV}`);
 console.log(`🔑 JWT Secret loaded: ${process.env.JWT_SECRET ? 'Yes' : 'No'}`);
 console.log(`🔐 Demo token enabled: ${NODE_ENV === 'development' ? 'Yes' : 'No'}`);
+
+
+
 
 // =====================================================
 // MIDDLEWARE SETUP
