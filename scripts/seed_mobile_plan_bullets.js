@@ -106,57 +106,16 @@ async function run() {
 
     if (error) throw error;
 
+    // AUTO-CREATION DISABLED - Plans must be created manually through admin portal
     if (!plans || !plans.length) {
-      console.warn('No subscription plans found. Creating three plans...');
-      const inserted = [];
-      for (let i = 0; i < targets.length; i++) {
-        const t = targets[i];
-        const now = new Date().toISOString();
-        let payload = {
-          plan_name: t.name,
-          base_price: t.price,
-          is_active: true,
-          created_at: now,
-          description: t.description,
-          features: t.features,
-          base_units: i === 0 ? 3 : i === 1 ? 7 : 15,
-          unit_type: 'zipcode',
-          additional_unit_price: 10,
-        };
-
-        const dropOrder = ['additional_unit_price','unit_type','base_units','features','description'];
-        let lastErr = null;
-        for (let attempt = 0; attempt <= dropOrder.length; attempt++) {
-          const { data, error: ierr } = await supabase
-            .from('subscription_plans')
-            .insert(payload)
-            .select('id, plan_name, base_price')
-            .single();
-          if (!ierr) {
-            inserted.push(data);
-            break;
-          }
-          lastErr = ierr;
-          const msg = (ierr.message || '').toLowerCase();
-          const match = msg.match(/could not find the '([^']+)' column/);
-          let col = match && match[1];
-          if (!col && (ierr.code === 'PGRST204' || msg.includes('pgrst204'))) {
-            col = dropOrder[attempt];
-          }
-          if (col && col in payload) {
-            console.warn(`Insert fallback: dropping column ${col}`);
-            delete payload[col];
-            continue;
-          }
-          break;
-        }
-        if (lastErr && inserted.length <= i) {
-          throw lastErr;
-        }
-      }
-
-      console.log('Inserted plans:', inserted);
-      console.log('\nDone seeding plan descriptions and features.');
+      console.warn('⚠️  No subscription plans found.');
+      console.warn('⚠️  Plans must be created manually through the admin portal.');
+      console.warn('⚠️  This script will only UPDATE existing plans, not create new ones.');
+      console.log('\nTo create plans:');
+      console.log('1. Open the admin portal at http://localhost:3002');
+      console.log('2. Navigate to Subscriptions & Territory → Subscription Plans');
+      console.log('3. Click "+Create New Plan" and fill in the form manually');
+      console.log('\nDone. No plans to update.');
       process.exit(0);
     }
 

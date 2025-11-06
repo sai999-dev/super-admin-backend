@@ -289,27 +289,38 @@ exports.addTerritory = async (req, res) => {
 };
 
 /**
- * DELETE /api/mobile/territories/:zipcode
- * Remove a zipcode territory for the authenticated agency (Flutter compatibility)
+ * DELETE /api/mobile/territories/:id
+ * Remove a territory by ID or zipcode (Flutter API contract)
+ * Supports both :id (UUID) and :zipcode (string) parameters
  */
 exports.removeTerritory = async (req, res) => {
   try {
     const agencyId = req.agency.id;
-    const { zipcode } = req.params;
+    const { id, zipcode } = req.params;
+    const territoryId = id || zipcode; // Support both :id and :zipcode
 
-    if (!zipcode) {
-      return res.status(400).json({ success: false, message: 'zipcode is required' });
+    if (!territoryId) {
+      return res.status(400).json({ success: false, message: 'Territory ID or zipcode is required' });
     }
 
-    const { data: existing } = await supabase
+    // Check if territoryId is a UUID (contains dashes) or zipcode
+    const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(territoryId);
+    
+    let query = supabase
       .from('territories')
       .select('id')
       .eq('agency_id', agencyId)
-      .eq('type', 'zipcode')
-      .or(`value.eq.${zipcode},zipcode.eq.${zipcode}`)
-      .eq('is_active', true)
+      .eq('is_active', true);
+    
+    if (isUUID) {
+      query = query.eq('id', territoryId);
+    } else {
+      query = query.or(`value.eq.${territoryId},zipcode.eq.${territoryId}`);
+    }
+
+    const { data: existing } = await query
       .limit(1)
-      .single();
+      .maybeSingle();
 
     if (!existing) {
       return res.status(404).json({ success: false, message: 'Territory not found' });

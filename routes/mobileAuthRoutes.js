@@ -135,28 +135,12 @@ router.post('/register', async (req, res) => {
         selectedPlanId = defaultPlan.id;
         console.log('Using default plan:', selectedPlanId);
       } else {
-        // Create a fallback free trial plan in development
-        if ((process.env.NODE_ENV || 'development') !== 'production') {
-          const { data: createdPlan, error: createPlanError } = await supabase
-            .from('subscription_plans')
-            .insert([
-              {
-                plan_name: 'Free Trial',
-                description: '14-day trial plan (auto-created)',
-                base_price: 0,
-                is_active: true,
-                base_cities_included: 5,
-              },
-            ])
-            .select('id')
-            .maybeSingle();
-          if (!createPlanError && createdPlan) {
-            selectedPlanId = createdPlan.id;
-            console.log('Created fallback trial plan:', selectedPlanId);
-          } else {
-            console.warn('Failed to create fallback plan:', createPlanError?.message);
-          }
-        }
+        // AUTO-CREATION DISABLED - Plans must be created manually through admin portal
+        // No fallback plan creation - admin must create plans first
+        console.warn('⚠️  No active subscription plan found. User registration requires an active plan.');
+        console.warn('⚠️  Admin must create subscription plans manually through the admin portal.');
+        console.warn('⚠️  User registration will proceed without a plan assignment.');
+        // selectedPlanId remains null - user will be registered without a subscription
       }
     }
 

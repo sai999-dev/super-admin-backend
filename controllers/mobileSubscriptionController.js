@@ -95,8 +95,60 @@ const buildPlanLookup = async (planIds = []) => {
 };
 
 /**
+ * GET /api/mobile/subscription
+ * Get current subscription (Flutter API contract)
+ * Matches Flutter expected format
+ */
+exports.getSubscription = async (req, res) => {
+  try {
+    const agencyId = req.agency.id;
+    const subscription = await fetchSubscriptionRecord(agencyId, ACTIVE_SUBSCRIPTION_STATUSES);
+
+    if (!subscription) {
+      return res.status(200).json({
+        success: true,
+        subscription: null,
+        message: 'No active subscription found'
+      });
+    }
+
+    const [plan, territories] = await Promise.all([
+      fetchPlanById(subscription.plan_id),
+      fetchTerritoriesBySubscription(subscription.id)
+    ]);
+
+    const activeTerritories = territories.filter((territory) => territory.is_active !== false);
+    
+    // Format response to match Flutter expectations
+    res.status(200).json({
+      success: true,
+      subscription: {
+        id: subscription.id,
+        planId: subscription.plan_id,
+        planName: plan?.name || plan?.plan_name || null,
+        status: subscription.status,
+        monthlyPrice: safeRound(subscription.custom_price_per_unit ?? plan?.price_per_unit ?? plan?.base_price ?? 0),
+        startDate: subscription.start_date || subscription.created_at,
+        nextBillingDate: subscription.next_billing_date,
+        trialEndDate: subscription.trial_end_date,
+        autoRenew: subscription.auto_renew !== false,
+        currentUnits: subscription.current_units ?? activeTerritories.length,
+        territoriesCount: activeTerritories.length
+      }
+    });
+  } catch (error) {
+    console.error('Error in getSubscription:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error',
+      error: process.env.NODE_ENV === 'development' ? error.message : 'Something went wrong'
+    });
+  }
+};
+
+/**
  * GET /api/mobile/subscription/status
- * Get agency subscription status and territories
+ * Get agency subscription status and territories (legacy endpoint)
  */
 exports.getSubscriptionStatus = async (req, res) => {
   try {

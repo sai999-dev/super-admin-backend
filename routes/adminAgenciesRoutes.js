@@ -256,7 +256,9 @@ const fetchAgencyStats = async (agencyId) => {
   };
 };
 
-const findOrCreateDefaultPlan = async () => {
+// Find existing plan only - NO AUTO-CREATION
+// Plans must be created manually through the admin portal
+const findDefaultPlan = async () => {
   const lookup = await supabase
     .from('subscription_plans')
     .select('id, plan_name, base_price')
@@ -266,25 +268,8 @@ const findOrCreateDefaultPlan = async () => {
     .maybeSingle();
 
   if (lookup.error) throw lookup.error;
-  if (lookup.data) return lookup.data;
-
-  const creation = await supabase
-    .from('subscription_plans')
-    .insert([
-      {
-        plan_name: 'Admin Default',
-        description: 'Auto-created default plan',
-        unit_type: 'zipcode',
-        base_price: 0,
-        base_cities_included: 5,
-        is_active: true
-      }
-    ])
-    .select('id, plan_name, base_price')
-    .maybeSingle();
-
-  if (creation.error) throw creation.error;
-  return creation.data;
+  // Return null if no plan exists - do NOT auto-create
+  return lookup.data || null;
 };
 
 const mirrorAgencySubscription = async ({ agencyId, plan, monthlyPayment }) => {
@@ -526,19 +511,24 @@ router.post('/agencies', async (req, res) => {
     const newAgency = creation.data;
     const newAgencyId = resolveAgencyId(newAgency);
 
-    let defaultPlan;
+    // Only assign subscription if a plan exists - NO AUTO-CREATION
+    let defaultPlan = null;
     try {
-      defaultPlan = await findOrCreateDefaultPlan();
+      defaultPlan = await findDefaultPlan();
     } catch (planError) {
-      console.warn('Warning: could not resolve default plan:', planError.message);
+      console.warn('Warning: could not find existing plan:', planError.message);
+      // Do not create plans automatically - admin must create plans manually
     }
 
+    // Only create subscription if a plan was found (not auto-created)
     if (defaultPlan) {
       await mirrorAgencySubscription({
         agencyId: newAgencyId,
         plan: defaultPlan,
         monthlyPayment: 0
       });
+    } else {
+      console.log('No active subscription plan found. Agency created without subscription. Admin must assign a plan manually.');
     }
 
     res.status(201).json({

@@ -32,6 +32,377 @@ const { authenticateAgency } = require('../middleware/agencyAuth');
 // GET /api/mobile/subscription/plans (Public)
 router.get('/subscription/plans', mobileSubscriptionController.getAvailablePlans);
 
+// =====================================================
+// MOBILE AUTH ROUTES (Flutter API Contract)
+// These routes match Flutter's expected /api/mobile/auth/* paths
+// They use the same handlers as /api/v1/agencies/* for consistency
+// =====================================================
+
+// Import auth handlers directly
+const bcrypt = require('bcryptjs');
+const supabase = require('../config/supabaseClient');
+const { generateAgencyToken } = require('../middleware/agencyAuth');
+const emailService = require('../services/emailService');
+
+// Helper to normalize agency row (copied from mobileAuthRoutes for consistency)
+function normalizeAgencyRow(agencyRow) {
+  if (!agencyRow) return null;
+  return {
+    id: agencyRow.id || agencyRow.agency_id,
+    business_name: agencyRow.business_name || agencyRow.agency_name,
+    email: agencyRow.email,
+    phone_number: agencyRow.phone_number || agencyRow.contact_phone,
+    status: agencyRow.status || (agencyRow.is_active === false ? 'inactive' : 'active'),
+    verified: agencyRow.verified ?? (agencyRow.verification_status === 'VERIFIED'),
+    password_hash: agencyRow.password_hash,
+    raw: agencyRow
+  };
+}
+
+/**
+ * POST /api/mobile/auth/register
+ * Register new agency
+ * Matches Flutter API contract exactly
+ */
+router.post('/auth/register', async (req, res) => {
+  try {
+    const { email, password, agency_name, business_name, phone, contact_name, zipcodes, industry, plan_id, payment_method_id } = req.body;
+
+    // Validation
+    if (!email || !password) {
+      return res.status(400).json({
+        success: false,
+        message: 'Email and password are required'
+      });
+    }
+
+    const normalizedEmail = email.trim().toLowerCase();
+    const hashedPassword = await bcrypt.hash(password, 10);
+
+    // Check if agency exists
+    const { data: existingAgency } = await supabase
+      .from('agencies')
+      .select('id')
+      .eq('email', normalizedEmail)
+      .maybeSingle();
+
+    if (existingAgency) {
+      return res.status(409).json({
+        success: false,
+        message: 'Agency with this email already exists'
+      });
+    }
+
+    // Create agency
+    const agencyData = {
+      email: normalizedEmail,
+      password_hash: hashedPassword,
+      business_name: business_name || agency_name,
+      agency_name: agency_name || business_name,
+      phone_number: phone,
+      contact_name: contact_name,
+      industry_type: industry || 'healthcare',
+      status: 'ACTIVE',
+      is_active: true,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    };
+
+    const { data: createdAgency, error: createError } = await supabase
+      .from('agencies')
+      .insert([agencyData])
+      .select('*')
+      .single();
+
+    if (createError || !createdAgency) {
+      return res.status(500).json({
+        success: false,
+        message: 'Failed to create agency',
+        error: createError?.message
+      });
+    }
+
+    const normalizedAgency = normalizeAgencyRow(createdAgency);
+
+    // Create subscription if plan_id provided
+    let subscription = null;
+    if (plan_id) {
+      const now = new Date();
+      const trialEnd = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000);
+      const nextBilling = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+
+      const { data: subscriptionData } = await supabase
+        .from('subscriptions')
+        .insert([{
+          agency_id: normalizedAgency.id,
+          plan_id: plan_id,
+          status: 'trial',
+          start_date: now.toISOString(),
+          trial_end_date: trialEnd.toISOString(),
+          next_billing_date: nextBilling.toISOString(),
+          auto_renew: true,
+          metadata: { payment_method_id }
+        }])
+        .select()
+        .single();
+
+      subscription = subscriptionData;
+
+      // Add territories
+      if (Array.isArray(zipcodes) && zipcodes.length > 0 && subscription) {
+        const territoryInserts = zipcodes.map(zipcode => ({
+          subscription_id: subscription.id,
+          agency_id: normalizedAgency.id,
+          type: 'zipcode',
+          value: zipcode,
+          state: 'USA',
+          is_active: true
+        }));
+
+        await supabase.from('territories').insert(territoryInserts);
+      }
+    }
+
+    // Generate JWT token
+    const token = generateAgencyToken({ 
+      id: normalizedAgency.id, 
+      email: normalizedAgency.email, 
+      businessName: normalizedAgency.business_name 
+    });
+
+    res.status(201).json({
+      success: true,
+      token,
+      agency_id: normalizedAgency.id,
+      user_profile: {
+        email: normalizedAgency.email,
+        agency_name: normalizedAgency.business_name
+      }
+    });
+  } catch (error) {
+    console.error('Registration error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Registration failed',
+      error: error.message
+    });
+  }
+});
+
+/**
+ * POST /api/mobile/auth/login
+ * Login
+ * Matches Flutter API contract exactly
+ */
+router.post('/auth/login', async (req, res) => {
+  try {
+    const { email, password } = req.body;
+
+    if (!email || !password) {
+      return res.status(400).json({
+        success: false,
+        message: 'Email and password are required'
+      });
+    }
+
+    const normalizedEmail = email.trim().toLowerCase();
+
+    // Find agency
+    const { data: agencyRow, error: agencyError } = await supabase
+      .from('agencies')
+      .select('*')
+      .eq('email', normalizedEmail)
+      .maybeSingle();
+
+    if (agencyError || !agencyRow) {
+      return res.status(401).json({
+        success: false,
+        message: 'Invalid email or password'
+      });
+    }
+
+    const normalizedAgency = normalizeAgencyRow(agencyRow);
+
+    // Verify password
+    let isValidPassword = false;
+    if (normalizedAgency.password_hash) {
+      isValidPassword = await bcrypt.compare(password, normalizedAgency.password_hash);
+    } else {
+      // Check users table
+      const { data: userRow } = await supabase
+        .from('users')
+        .select('password_hash')
+        .eq('email', normalizedEmail)
+        .maybeSingle();
+      
+      if (userRow?.password_hash) {
+        isValidPassword = await bcrypt.compare(password, userRow.password_hash);
+      }
+    }
+
+    if (!isValidPassword) {
+      return res.status(401).json({
+        success: false,
+        message: 'Invalid email or password'
+      });
+    }
+
+    // Generate token
+    const token = generateAgencyToken({ 
+      id: normalizedAgency.id, 
+      email: normalizedAgency.email, 
+      businessName: normalizedAgency.business_name 
+    });
+
+    res.json({
+      success: true,
+      token,
+      data: {
+        agency_id: normalizedAgency.id,
+        business_name: normalizedAgency.business_name,
+        email: normalizedAgency.email
+      }
+    });
+  } catch (error) {
+    console.error('Login error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Login failed',
+      error: error.message
+    });
+  }
+});
+
+/**
+ * POST /api/mobile/auth/verify-email
+ * Verify email with code
+ * Matches Flutter API contract exactly
+ */
+router.post('/auth/verify-email', async (req, res) => {
+  try {
+    const { email, verification_code } = req.body;
+
+    if (!email || !verification_code) {
+      return res.status(400).json({
+        success: false,
+        message: 'Email and verification code are required'
+      });
+    }
+
+    const normalizedEmail = email.trim().toLowerCase();
+
+    const { data: agencyRow } = await supabase
+      .from('agencies')
+      .select('*')
+      .eq('email', normalizedEmail)
+      .single();
+
+    if (!agencyRow) {
+      return res.status(404).json({
+        success: false,
+        message: 'Agency not found'
+      });
+    }
+
+    // Check verification code
+    if (agencyRow.verification_code !== verification_code) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid verification code'
+      });
+    }
+
+    // Update as verified
+    await supabase
+      .from('agencies')
+      .update({
+        is_verified: true,
+        verification_code: null,
+        verification_expires_at: null,
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', agencyRow.id);
+
+    res.json({
+      success: true,
+      message: 'Email verified successfully'
+    });
+  } catch (error) {
+    console.error('Verify email error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Verification failed',
+      error: error.message
+    });
+  }
+});
+
+/**
+ * POST /api/mobile/auth/forgot-password
+ * Request password reset
+ * Matches Flutter API contract exactly
+ */
+router.post('/auth/forgot-password', async (req, res) => {
+  try {
+    const { email } = req.body;
+
+    if (!email) {
+      return res.status(400).json({
+        success: false,
+        message: 'Email is required'
+      });
+    }
+
+    const normalizedEmail = email.trim().toLowerCase();
+
+    const { data: agencyRow } = await supabase
+      .from('agencies')
+      .select('id, email')
+      .eq('email', normalizedEmail)
+      .maybeSingle();
+
+    // Always return success (security best practice)
+    if (!agencyRow) {
+      return res.json({
+        success: true,
+        message: 'If an account with this email exists, password reset instructions have been sent.'
+      });
+    }
+
+    // Generate reset token
+    const crypto = require('crypto');
+    const resetToken = crypto.randomBytes(32).toString('hex');
+    const expiresAt = new Date(Date.now() + 3600000);
+
+    // Store token
+    await supabase.from('password_reset_tokens').insert({
+      agency_id: agencyRow.id,
+      token: resetToken,
+      expires_at: expiresAt.toISOString(),
+      created_at: new Date().toISOString()
+    });
+
+    // Send email
+    try {
+      await emailService.sendPasswordResetEmail(normalizedEmail, resetToken);
+    } catch (emailError) {
+      console.warn('Failed to send password reset email:', emailError.message);
+    }
+
+    res.json({
+      success: true,
+      message: 'If an account with this email exists, password reset instructions have been sent.'
+    });
+  } catch (error) {
+    console.error('Forgot password error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to process password reset request',
+      error: error.message
+    });
+  }
+});
+
 // Apply agency authentication middleware to all remaining mobile routes
 router.use(authenticateAgency);
 
@@ -40,8 +411,15 @@ router.use(authenticateAgency);
 // =====================================================
 
 /**
+ * @route GET /api/mobile/subscription
+ * @desc Get current subscription (Flutter API contract)
+ * @access Private (Agency)
+ */
+router.get('/subscription', mobileSubscriptionController.getSubscription);
+
+/**
  * @route GET /api/mobile/subscription/status
- * @desc Get agency subscription status and territories
+ * @desc Get agency subscription status and territories (legacy endpoint)
  * @access Private (Agency)
  */
 router.get('/subscription/status', mobileSubscriptionController.getSubscriptionStatus);
@@ -116,7 +494,6 @@ router.put('/payment-method', mobileSubscriptionController.updatePaymentMethod);
 router.get('/territories', mobileTerritoryController.getAgencyTerritories);
 // Flutter compatibility endpoints
 router.post('/territories', mobileTerritoryController.addTerritory);
-router.delete('/territories/:zipcode', mobileTerritoryController.removeTerritory);
 
 /**
  * @route GET /api/mobile/territories/available
@@ -133,18 +510,18 @@ router.get('/territories/available', mobileTerritoryController.getAvailableTerri
 router.post('/territories/request', mobileTerritoryController.requestTerritoryAddition);
 
 /**
- * @route PUT /api/mobile/territories/:territoryId
- * @desc Update territory priority or status (if allowed)
+ * @route PUT /api/mobile/territories/:id
+ * @desc Update territory (Flutter API contract - uses :id instead of :territoryId)
  * @access Private (Agency)
  */
-router.put('/territories/:territoryId', mobileTerritoryController.updateTerritory);
+router.put('/territories/:id', mobileTerritoryController.updateTerritory);
 
 /**
- * @route DELETE /api/mobile/territories/:territoryId
- * @desc Request territory removal (requires admin approval)
+ * @route DELETE /api/mobile/territories/:id
+ * @desc Remove territory (Flutter API contract - uses :id)
  * @access Private (Agency)
  */
-router.delete('/territories/:territoryId', mobileTerritoryController.requestTerritoryRemoval);
+router.delete('/territories/:id', mobileTerritoryController.removeTerritory);
 
 // =====================================================
 // MOBILE MESSAGING ROUTES
