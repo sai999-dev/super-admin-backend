@@ -20,26 +20,20 @@ const app = express();
 
 
 
-// ✅ Allow CORS from your external portal
-// ✅ CORS Setup (Render + Local)
-const allowedOrigins = [
-  'https://real-estate-portal-oh6c.onrender.com',
-  'http://localhost:5500'
-];
-
+// ✅ CORS Setup for Webhooks - Allow ALL origins for webhook routes (authenticated via API key)
 app.use((req, res, next) => {
   const origin = req.headers.origin;
 
-  if (allowedOrigins.includes(origin)) {
-    res.setHeader('Access-Control-Allow-Origin', origin);
-  }
+  // Allow all origins for webhook endpoints (they're protected by API key)
+  if (req.path.startsWith('/api/webhooks/')) {
+    res.setHeader('Access-Control-Allow-Origin', origin || '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, x-api-key, Authorization');
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
 
-  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, x-api-key');
-  res.setHeader('Access-Control-Allow-Credentials', 'true');
-
-  if (req.method === 'OPTIONS') {
-    return res.sendStatus(204); // Stop here for preflight
+    if (req.method === 'OPTIONS') {
+      return res.sendStatus(204);
+    }
   }
 
   next();
@@ -121,60 +115,73 @@ app.use(helmet({
   crossOriginEmbedderPolicy: false
 }));
 
-// CORS configuration
-app.use(cors({
-  origin: function (origin, callback) {
-    // Allow requests with no origin (like mobile apps or curl requests)
-    if (!origin) return callback(null, true);
-    
-    // Build allowed origins list from environment variables
-    const allowedOrigins = [];
-    
-    // Add FRONTEND_URL if provided
-    if (process.env.FRONTEND_URL) {
-      allowedOrigins.push(process.env.FRONTEND_URL);
-    }
-    
-    // Add BASE_URL if provided (and different from FRONTEND_URL)
-    if (process.env.BASE_URL && process.env.BASE_URL !== process.env.FRONTEND_URL) {
-      allowedOrigins.push(process.env.BASE_URL);
-    }
-    
-    // Add ALLOWED_ORIGINS if provided (comma-separated list)
-    if (process.env.ALLOWED_ORIGINS) {
-      const origins = process.env.ALLOWED_ORIGINS.split(',').map(url => url.trim());
-      allowedOrigins.push(...origins);
-    }
-    
-    // In development, allow localhost on any port (if no FRONTEND_URL is set)
-    if (NODE_ENV === 'development' && !process.env.FRONTEND_URL) {
-      if (origin.match(/^https?:\/\/localhost(:\d+)?$/)) {
-        return callback(null, true);
-      }
-      if (origin.match(/^https?:\/\/127\.0\.0\.1(:\d+)?$/)) {
-        return callback(null, true);
-      }
-    }
-    
-    if (allowedOrigins.includes(origin)) {
-      return callback(null, true);
-    }
-    
-    callback(new Error('Not allowed by CORS'));
-  },
-  credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin'],
-  exposedHeaders: ['Content-Length', 'X-Foo', 'X-Bar'],
-  optionsSuccessStatus: 200 // some legacy browsers (IE11, various SmartTVs) choke on 204
-}));
-
-// Handle preflight OPTIONS requests (Express 5.x compatible)
+// CORS configuration - Dynamic origin checking with webhook support
 app.use((req, res, next) => {
+  // Skip CORS middleware for webhook routes (handled by earlier middleware)
+  if (req.path.startsWith('/api/webhooks/')) {
+    return next();
+  }
+
+  // Apply CORS middleware for non-webhook routes
+  cors({
+    origin: function (origin, callback) {
+      // Allow requests with no origin (like mobile apps or curl requests)
+      if (!origin) return callback(null, true);
+
+      // Build allowed origins list from environment variables
+      const allowedOrigins = [];
+
+      // Add FRONTEND_URL if provided
+      if (process.env.FRONTEND_URL) {
+        allowedOrigins.push(process.env.FRONTEND_URL);
+      }
+
+      // Add BASE_URL if provided (and different from FRONTEND_URL)
+      if (process.env.BASE_URL && process.env.BASE_URL !== process.env.FRONTEND_URL) {
+        allowedOrigins.push(process.env.BASE_URL);
+      }
+
+      // Add ALLOWED_ORIGINS if provided (comma-separated list)
+      if (process.env.ALLOWED_ORIGINS) {
+        const origins = process.env.ALLOWED_ORIGINS.split(',').map(url => url.trim());
+        allowedOrigins.push(...origins);
+      }
+
+      // In development, allow localhost on any port (if no FRONTEND_URL is set)
+      if (NODE_ENV === 'development' && !process.env.FRONTEND_URL) {
+        if (origin.match(/^https?:\/\/localhost(:\d+)?$/)) {
+          return callback(null, true);
+        }
+        if (origin.match(/^https?:\/\/127\.0\.0\.1(:\d+)?$/)) {
+          return callback(null, true);
+        }
+      }
+
+      if (allowedOrigins.includes(origin)) {
+        return callback(null, true);
+      }
+
+      callback(new Error('Not allowed by CORS'));
+    },
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin', 'x-api-key'],
+    exposedHeaders: ['Content-Length', 'X-Foo', 'X-Bar'],
+    optionsSuccessStatus: 200
+  })(req, res, next);
+});
+
+// Handle preflight OPTIONS requests for non-webhook routes (Express 5.x compatible)
+app.use((req, res, next) => {
+  // Webhook OPTIONS already handled by earlier middleware
+  if (req.path.startsWith('/api/webhooks/')) {
+    return next();
+  }
+
   if (req.method === 'OPTIONS') {
     res.header('Access-Control-Allow-Origin', req.headers.origin || '*');
     res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS, PATCH');
-    res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept, Origin');
+    res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept, Origin, x-api-key');
     res.header('Access-Control-Allow-Credentials', 'true');
     return res.sendStatus(200);
   }
