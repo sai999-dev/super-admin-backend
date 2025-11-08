@@ -1,53 +1,39 @@
 /**
  * Lead Ingestion Service
- * Handles transformation and validation of leads from public portals
+ * Handles transformation, validation, and round-robin agency assignment
  */
 
 const supabase = require('../config/supabaseClient');
 const logger = require('../utils/logger');
 
-class LeadIngestionService {
-  constructor() {
-    this.lastAssignedIndex = 0; // for round-robin tracking
-  }
+// Keep round-robin state in memory
+let agencyIndex = 0;
 
+class LeadIngestionService {
   /**
    * Transform portal-specific payload to standardized lead format
-   * @param {Object} payload - Raw payload from portal
-   * @param {Object} portal - Portal configuration
-   * @returns {Object} - Transformed lead data
    */
   transformData(payload, portal) {
     try {
-      console.log('📥 Received payload:', JSON.stringify(payload, null, 2));
-
-      let leadName =
+      const leadName =
         payload.name ||
         payload.lead_name ||
         payload.full_name ||
-        (payload.first_name ? `${payload.first_name} ${payload.last_name || ''}`.trim() : null) ||
+        (payload.first_name
+          ? `${payload.first_name} ${payload.last_name || ''}`.trim()
+          : null) ||
         payload.contact_name ||
         payload.customer_name ||
-        null;
+        'Unknown';
 
-      if (!leadName) {
-        const serviceType = payload.service_type || payload.serviceType;
-        const careNeed = payload.care_need || payload.careNeed || payload.needs;
-        if (serviceType && careNeed) leadName = `${serviceType} - ${careNeed}`;
-        else leadName = serviceType || careNeed || 'Unknown';
-      }
-
-      let email =
+      const email =
         payload.email ||
         payload.email_address ||
-        payload.emailAddress ||
         payload.contact_email ||
         payload.customer_email ||
         null;
 
-      if (!email && payload.contact && payload.contact.includes('@')) email = payload.contact;
-
-      let phoneNumber =
+      const phoneNumber =
         payload.phone ||
         payload.phone_number ||
         payload.phoneNumber ||
@@ -57,46 +43,17 @@ class LeadIngestionService {
         payload.telephone ||
         null;
 
-      if (!phoneNumber && payload.contact) {
-        const contact = payload.contact.toString().trim();
-        const digitsOnly = contact.replace(/\D/g, '');
-        if (digitsOnly.length >= 7) phoneNumber = contact;
-      }
-
-      const city = payload.city || payload.location?.city || null;
-      const state = payload.state || payload.location?.state || payload.state_code || null;
-      const zipcode =
-        payload.zipcode ||
-        payload.zip_code ||
-        payload.zipCode ||
-        payload.postal_code ||
-        payload.zip ||
-        null;
-
-      let industry = payload.industry || payload.industry_type || portal.industry || 'non_healthcare';
-      if (industry.toLowerCase().includes('hospice')) industry = 'healthcare_hospice';
-      else if (industry.toLowerCase().includes('home_health')) industry = 'healthcare_homehealth';
-      else industry = 'non_healthcare';
-
       const transformed = {
         portal_id: portal.id,
-        portal_code: portal.portal_code || null,
-        industry,
-        lead_name: leadName.trim(),
-        email: email ? email.toLowerCase().trim() : null,
-        phone_number: phoneNumber ? phoneNumber.toString().replace(/\D/g, '').slice(0, 20) : null,
-        city: city ? city.trim() : null,
-        state: state ? state.trim().toUpperCase().slice(0, 2) : null,
-        zipcode: zipcode ? zipcode.toString().trim().slice(0, 10) : null,
-        contact_email: email || null,
-        contact_phone: phoneNumber || null,
-        lead_data: {
-          ...payload,
-          source: payload.source || portal.portal_name || 'unknown',
-          address: payload.address || payload.street_address || payload.full_address || null,
-          submitted_at: new Date().toISOString(),
-          transformed_at: new Date().toISOString()
-        }
+        lead_name: leadName,
+        email: email ? email.toLowerCase() : null,
+        phone_number: phoneNumber ? phoneNumber.toString() : null,
+        property_type: payload.property_type || null,
+        budget_range: payload.budget_range || null,
+        preferred_location: payload.preferred_location || null,
+        needs: payload.needs || null,
+        created_at: new Date().toISOString(),
+        raw_payload: payload
       };
 
       return transformed;
@@ -107,32 +64,111 @@ class LeadIngestionService {
   }
 
   /**
-   * Validate transformed lead data
+   * Validate lead data
    */
   validate(leadData) {
     const errors = [];
-    if (!leadData.lead_name || leadData.lead_name.trim() === '') errors.push('Lead name is required');
-    if (!leadData.portal_id) errors.push('Portal ID is required');
-    if (!leadData.industry) errors.push('Industry is required');
 
-    if (leadData.email) {
-      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-      if (!emailRegex.test(leadData.email)) errors.push('Invalid email format');
+    if (!leadData.lead_name || leadData.lead_name.trim() === '') {
+      errors.push('Lead name is required');
+    }
+    if (!leadData.portal_id) {
+      errors.push('Portal ID is required');
+    }
+    if (!leadData.email && !leadData.phone_number) {
+      errors.push('Either email or phone number is required');
     }
 
-    if (leadData.phone_number) {
-      const phoneStr = leadData.phone_number.toString().trim();
-      if (phoneStr === '') errors.push('Phone number cannot be empty if provided');
-    }
-
-    if (!leadData.lead_data || typeof leadData.lead_data !== 'object')
-      errors.push('Lead data (lead_data) is required');
-
-    return { valid: errors.length === 0, errors };
+    return {
+      valid: errors.length === 0,
+      errors
+    };
   }
 
   /**
-   * Process complete lead ingestion flow
+   * Assign next active agency in round-robin order
+   */
+  async getNextAgency() {
+    try {
+      const { data: agencies, error } = await supabase
+        .from('agencies')
+        .select('id')
+        .eq('status', 'ACTIVE')
+        .order('created_date', { ascending: true });
+
+      if (error) throw error;
+      if (!agencies || agencies.length === 0) {
+        logger.warn('⚠️ No active agencies found');
+        return null;
+      }
+
+      // Pick next agency in sequence
+      const agency = agencies[agencyIndex % agencies.length];
+      agencyIndex = (agencyIndex + 1) % agencies.length;
+
+      logger.info(`🏢 Assigned agency ${agency.id} (index: ${agencyIndex})`);
+      return agency.id;
+    } catch (error) {
+      logger.error('Error getting next agency:', error.message);
+      return null;
+    }
+  }
+
+  /**
+   * Create lead + insert into audit_logs
+   */
+  async createLead(leadData) {
+    try {
+      // 1️⃣ Create lead record
+      const { data: lead, error: leadError } = await supabase
+        .from('leads')
+        .insert([leadData])
+        .select()
+        .single();
+
+      if (leadError) {
+        logger.error('❌ Error creating lead:', leadError);
+        throw new Error(`Failed to create lead: ${leadError.message}`);
+      }
+
+      logger.info(`✅ Lead created successfully with lead_id: ${lead.lead_id}`);
+
+      // 2️⃣ Get next agency in round-robin order
+      const assignedAgencyId = await this.getNextAgency();
+
+      // 3️⃣ Create audit log
+      const auditLog = {
+        lead_id: lead.lead_id, // Same as lead_id from leads table
+        lead_data: lead, // Store full JSON of lead
+        agency_id: assignedAgencyId, // Assigned agency UUID
+        time_stamp: new Date().toISOString(),
+        action_status: 'created'
+      };
+
+      const { error: auditError } = await supabase
+        .from('audit_logs')
+        .insert([auditLog]);
+
+      if (auditError) {
+        logger.error(
+          `⚠️ Failed to insert audit log for lead ${lead.lead_id}:`,
+          auditError
+        );
+      } else {
+        logger.info(
+          `📝 Lead ${lead.lead_id} successfully logged in audit_logs with agency ${assignedAgencyId}`
+        );
+      }
+
+      return lead;
+    } catch (error) {
+      logger.error('💥 Unexpected error in createLead():', error.message);
+      throw error;
+    }
+  }
+
+  /**
+   * Main lead processing pipeline
    */
   async processLead(payload, portal) {
     try {
@@ -140,138 +176,26 @@ class LeadIngestionService {
       const validation = this.validate(transformedData);
 
       if (!validation.valid) {
-        return { success: false, message: 'Lead validation failed', errors: validation.errors };
-      }
-
-      const duplicateCheck = await this.checkDuplicates(transformedData);
-      if (duplicateCheck.isDuplicate) {
-        return { success: false, message: 'Duplicate lead detected' };
+        return {
+          success: false,
+          message: 'Lead validation failed',
+          errors: validation.errors
+        };
       }
 
       const leadResult = await this.createLead(transformedData);
 
-      return { success: true, lead_id: leadResult.lead_id, data: transformedData };
+      return {
+        success: true,
+        lead_id: leadResult.lead_id,
+        data: transformedData
+      };
     } catch (error) {
       logger.error('Error processing lead:', error);
-      return { success: false, message: error.message };
-    }
-  }
-
-  /**
-   * Check for duplicate leads
-   */
-  async checkDuplicates(leadData) {
-    try {
-      if (leadData.email) {
-        const { data: emailMatch } = await supabase
-          .from('leads')
-          .select('id')
-          .eq('email', leadData.email.toLowerCase())
-          .gte('created_at', new Date(Date.now() - 86400000).toISOString())
-          .limit(1)
-          .single();
-        if (emailMatch) return { isDuplicate: true };
-      }
-
-      if (leadData.phone_number) {
-        const normalized = leadData.phone_number.replace(/\D/g, '');
-        const { data: phoneMatch } = await supabase
-          .from('leads')
-          .select('id')
-          .gte('created_at', new Date(Date.now() - 86400000).toISOString())
-          .limit(10);
-        if (phoneMatch?.some(p => p.phone_number?.replace(/\D/g, '').endsWith(normalized.slice(-10))))
-          return { isDuplicate: true };
-      }
-
-      return { isDuplicate: false };
-    } catch (error) {
-      logger.warn('Duplicate check error:', error.message);
-      return { isDuplicate: false };
-    }
-  }
-
-  /**
-   * 🔁 Assign next agency in round-robin order
-   */
-  async assignAgencyRoundRobin() {
-    try {
-      const { data: agencies, error } = await supabase
-        .from('agencies')
-        .select('id')
-        .eq('status', 'active')
-        .eq('is_active', true)
-        .order('created_at', { ascending: true });
-
-      if (error) {
-        logger.error('❌ Error fetching agencies:', error);
-        throw error;
-      }
-
-      if (!agencies || agencies.length === 0) {
-        logger.warn('⚠️ No active agencies found for round-robin assignment');
-        return null;
-      }
-
-      const index = this.lastAssignedIndex % agencies.length;
-      const selectedAgency = agencies[index];
-      this.lastAssignedIndex = (this.lastAssignedIndex + 1) % agencies.length;
-
-      logger.info(`🎯 Round-robin assigned agency ${selectedAgency.id} (${index + 1}/${agencies.length})`);
-      return selectedAgency.id;
-    } catch (err) {
-      logger.error('❌ Error in assignAgencyRoundRobin:', err.message);
-      return null;
-    }
-  }
-
-  /**
-   * Create lead, assign agency, and log in audit_logs
-   */
-  async createLead(leadData) {
-    try {
-      const { data: lead, error } = await supabase.from('leads').insert([leadData]).select().single();
-      if (error) throw new Error(`Failed to create lead: ${error.message}`);
-
-      logger.info(`✅ Lead created: ${lead.lead_id}`);
-
-      // 🔁 Round-robin agency assignment
-      const agency_id = await this.assignAgencyRoundRobin();
-
-      // 🔄 Update lead with assigned agency_id
-      if (agency_id) {
-        const { error: updateError } = await supabase
-          .from('leads')
-          .update({ agency_id })
-          .eq('lead_id', lead.lead_id);
-
-        if (updateError) {
-          logger.error(`❌ Failed to update lead ${lead.lead_id} with agency_id:`, updateError);
-        } else {
-          lead.agency_id = agency_id; // Update local object
-          logger.info(`✅ Lead ${lead.lead_id} assigned to agency ${agency_id}`);
-        }
-      }
-
-      // 📝 Log in audit_logs
-      const auditLog = {
-        lead_id: lead.lead_id,
-        lead_data: lead,
-        agency_id: agency_id || null,
-        time_stamp: new Date().toISOString(),
-        action_status: agency_id ? 'assigned_to_agency' : 'created_without_agency'
+      return {
+        success: false,
+        message: error.message
       };
-
-      const { error: auditError } = await supabase.from('audit_logs').insert([auditLog]);
-      if (auditError)
-        logger.error(`⚠️ Failed to log audit for lead ${lead.lead_id}:`, auditError);
-      else
-        logger.info(`📝 Logged lead ${lead.lead_id} in audit_logs (agency: ${agency_id || 'none'})`);
-
-      return lead;
-    } catch (error) {
-      logger.error('💥 Error in createLead():', error.message);
-      throw error;
     }
   }
 }
