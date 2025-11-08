@@ -200,19 +200,27 @@ class LeadIngestionService {
         .from('agencies')
         .select('id')
         .eq('status', 'active')
+        .eq('is_active', true)
         .order('created_at', { ascending: true });
 
-      if (error) throw error;
-      if (!agencies || agencies.length === 0) return null;
+      if (error) {
+        logger.error('❌ Error fetching agencies:', error);
+        throw error;
+      }
+
+      if (!agencies || agencies.length === 0) {
+        logger.warn('⚠️ No active agencies found for round-robin assignment');
+        return null;
+      }
 
       const index = this.lastAssignedIndex % agencies.length;
       const selectedAgency = agencies[index];
       this.lastAssignedIndex = (this.lastAssignedIndex + 1) % agencies.length;
 
-      logger.info(`🎯 Assigned agency: ${selectedAgency.id}`);
+      logger.info(`🎯 Round-robin assigned agency ${selectedAgency.id} (${index + 1}/${agencies.length})`);
       return selectedAgency.id;
     } catch (err) {
-      logger.error('Error assigning agency:', err.message);
+      logger.error('❌ Error in assignAgencyRoundRobin:', err.message);
       return null;
     }
   }
@@ -229,6 +237,21 @@ class LeadIngestionService {
 
       // 🔁 Round-robin agency assignment
       const agency_id = await this.assignAgencyRoundRobin();
+
+      // 🔄 Update lead with assigned agency_id
+      if (agency_id) {
+        const { error: updateError } = await supabase
+          .from('leads')
+          .update({ agency_id })
+          .eq('lead_id', lead.lead_id);
+
+        if (updateError) {
+          logger.error(`❌ Failed to update lead ${lead.lead_id} with agency_id:`, updateError);
+        } else {
+          lead.agency_id = agency_id; // Update local object
+          logger.info(`✅ Lead ${lead.lead_id} assigned to agency ${agency_id}`);
+        }
+      }
 
       // 📝 Log in audit_logs
       const auditLog = {
