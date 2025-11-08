@@ -63,15 +63,22 @@ class LeadIngestionService {
       }
 
       // Ensure round_robin_state table exists
-      const { data: state, error: stateError } = await supabase
+      let { data: state, error: stateError } = await supabase
         .from('round_robin_state')
         .select('id, last_agency_index')
         .limit(1)
         .single();
 
       if (stateError && stateError.code === 'PGRST116') {
-        // Table empty, insert default row
-        await supabase.from('round_robin_state').insert([{ last_agency_index: 0 }]);
+        // Table empty, insert default row and fetch it
+        const { data: newState, error: insertError } = await supabase
+          .from('round_robin_state')
+          .insert([{ last_agency_index: 0 }])
+          .select()
+          .single();
+
+        if (insertError) throw insertError;
+        state = newState;
       }
 
       let nextIndex = 0;
@@ -80,10 +87,14 @@ class LeadIngestionService {
       }
 
       const selected = agencies[nextIndex];
-      await supabase
+      const { error: updateError } = await supabase
         .from('round_robin_state')
         .update({ last_agency_index: nextIndex })
         .eq('id', state?.id || 1);
+
+      if (updateError) {
+        logger.error('⚠️ Failed to update round_robin_state:', updateError.message);
+      }
 
       console.log(`🏢 Assigned via Round-Robin → ${selected.agency_name} (${selected.id})`);
       return selected.id;
