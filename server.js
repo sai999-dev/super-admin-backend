@@ -1723,15 +1723,19 @@ app.post('/api/webhooks/:portal_code', async (req, res) => {
         preferred_location: req.body.preferred_location || null
       };
 
-      // Save to audit_logs table with unique lead ID
+      // 🔄 Round-robin agency assignment
+      const leadIngestionService = require('./services/leadIngestionService');
+      const assignedAgencyId = await leadIngestionService.getNextAgency();
+
+      // Save to audit_logs table with unique lead ID and assigned agency
       const { data: auditLogData, error: auditLogError } = await supabase
         .from('audit_logs')
         .insert([{
           lead_id: uniqueLeadId,
           lead_data: leadDataForAudit,
-          agency_id: null,
+          agency_id: assignedAgencyId,
           time_stamp: new Date().toISOString(),
-          action_status: 'created'
+          action_status: assignedAgencyId ? 'assigned' : 'unassigned'
         }])
         .select()
         .single();
