@@ -88,31 +88,34 @@ class LeadIngestionService {
   /**
    * Assign next active agency in round-robin order
    */
-  async getNextAgency() {
+    async getNextAgency() {
     try {
       const { data: agencies, error } = await supabase
         .from('agencies')
-        .select('id')
+        .select('id, agency_name, status')
         .eq('status', 'ACTIVE')
         .order('created_date', { ascending: true });
 
       if (error) throw error;
+
+      console.log('🔍 Active agencies fetched:', agencies);
+
       if (!agencies || agencies.length === 0) {
         logger.warn('⚠️ No active agencies found');
         return null;
       }
 
-      // Pick next agency in sequence
       const agency = agencies[agencyIndex % agencies.length];
+      console.log(`🏢 Round Robin Pick → index=${agencyIndex}, agency_id=${agency.id}, name=${agency.agency_name}`);
       agencyIndex = (agencyIndex + 1) % agencies.length;
 
-      logger.info(`🏢 Assigned agency ${agency.id} (index: ${agencyIndex})`);
       return agency.id;
     } catch (error) {
-      logger.error('Error getting next agency:', error.message);
+      logger.error('❌ Error getting next agency:', error.message);
       return null;
     }
   }
+
 
   /**
    * Create lead + insert into audit_logs
