@@ -199,8 +199,8 @@ class LeadIngestionService {
       const { data: agencies, error } = await supabase
         .from('agencies')
         .select('id')
-        .eq('status', 'ACTIVE')
-        .order('created_date', { ascending: true });
+        .eq('status', 'active')
+        .order('created_at', { ascending: true });
 
       if (error) throw error;
       if (!agencies || agencies.length === 0) return null;
