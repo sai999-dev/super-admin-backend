@@ -69,7 +69,7 @@ router.get('/subscription-plans', async (req, res) => {
       const baseUnits = plan.min_units || plan.minUnits || features.baseUnits || null;
       const baseZipcodesValue = features.baseZipcodes ?? plan.base_zipcodes ?? baseUnits;
       const baseCitiesValue = features.baseCities ?? plan.base_cities_included ?? baseUnits;
-      const additionalUnitPrice = features.additionalPrice ?? features.additionalUnitPrice ?? plan.additional_price ?? 0;
+      // additional_unit_price field removed - no longer used
       const customPricingValue = metadata?.customPricing ?? features.customPricing ?? plan.custom_pricing ?? '';
       const descriptionValue = plan.description || metadata?.description || '';
       // Normalize features for clients: prefer array of strings when possible
@@ -94,8 +94,6 @@ router.get('/subscription-plans', async (req, res) => {
         base_zipcodes: baseZipcodesValue !== null ? Number(baseZipcodesValue) : null,
         baseCities: baseCitiesValue !== null ? Number(baseCitiesValue) : null,
         base_cities_included: baseCitiesValue !== null ? Number(baseCitiesValue) : null,
-        additionalPrice: Number(additionalUnitPrice || 0),
-        additional_price: Number(additionalUnitPrice || 0),
         maxZipcodes: plan.max_units || plan.maxUnits !== null ? Number(plan.max_units || plan.maxUnits) : null,
         max_zipcodes: plan.max_units || plan.maxUnits !== null ? Number(plan.max_units || plan.maxUnits) : null,
         maxCities: plan.max_units || plan.maxUnits !== null ? Number(plan.max_units || plan.maxUnits) : null,
@@ -148,8 +146,6 @@ router.post('/subscription-plans', async (req, res) => {
       price_per_unit,
       min_units,
       base_units,
-      additional_unit_price,
-      additional_price,
       max_units,
       unit_type,
       trial_days,
@@ -164,7 +160,6 @@ router.post('/subscription-plans', async (req, res) => {
       unit_type: unit_type || 'zipcode',
       base_units: base_units || min_units || 10,
       base_price: parseFloat(base_price ?? price_per_unit ?? 0),
-      additional_unit_price: parseFloat(additional_unit_price ?? additional_price ?? 0),
       max_units: max_units ?? null,
       trial_period_days: trial_days ?? trial_period_days ?? 0,
       is_active: is_active ?? true,
@@ -208,7 +203,6 @@ router.put('/subscription-plans/:id', async (req, res) => {
     // Map alternative field names to canonical columns
     if (updates.plan_name && !updates.name) updates.name = updates.plan_name;
     if (updates.base_price === undefined && updates.price_per_unit !== undefined) updates.base_price = updates.price_per_unit;
-    if (updates.additional_unit_price === undefined && updates.additional_price !== undefined) updates.additional_unit_price = updates.additional_price;
     if (updates.min_units === undefined && updates.base_units !== undefined) updates.min_units = updates.base_units;
 
     const { data: updated, error } = await supabase

@@ -1,0 +1,321 @@
+### ============================================
+### API TESTING FILE FOR BEGINNERS
+### Use with VS Code REST Client extension
+### ============================================
+
+### ============================================
+### 1. BASIC TESTS (No Authentication Needed)
+### ============================================
+
+### Health Check - Test if server is running
+GET http://localhost:3000/api/health
+
+### Get API Information
+GET http://localhost:3000/api
+
+### Get System Metrics
+GET http://localhost:3000/api/metrics
+
+### Get Public Portals List
+GET http://localhost:3000/api/portals
+
+### Get Subscription Plans (Public)
+GET http://localhost:3000/api/mobile/subscription/plans
+
+### ============================================
+### 2. MOBILE APP - AUTHENTICATION
+### ============================================
+
+### Register New Agency
+POST http://localhost:3000/api/v1/agencies/register
+Content-Type: application/json
+
+{
+  "email": "test@agency.com",
+  "password": "Test123!@#",
+  "agency_name": "Test Agency",
+  "business_name": "Test Business Inc",
+  "phone": "123-456-7890",
+  "contact_name": "John Doe",
+  "zipcodes": ["12345", "67890"],
+  "industry": "healthcare"
+}
+
+### Login as Agency (Mobile App)
+POST http://localhost:3000/api/v1/agencies/login
+Content-Type: application/json
+
+{
+  "email": "test@agency.com",
+  "password": "Test123!@#"
+}
+
+### Get Agency Profile (Need Token - Replace YOUR_TOKEN)
+GET http://localhost:3000/api/v1/agencies/profile
+Authorization: Bearer YOUR_TOKEN_HERE
+
+### Update Agency Profile (Need Token)
+PUT http://localhost:3000/api/v1/agencies/profile
+Authorization: Bearer YOUR_TOKEN_HERE
+Content-Type: application/json
+
+{
+  "agency_name": "Updated Agency Name",
+  "phone": "987-654-3210"
+}
+
+### Verify Email
+POST http://localhost:3000/api/mobile/auth/verify-email
+Content-Type: application/json
+
+{
+  "email": "test@agency.com",
+  "verification_code": "123456"
+}
+
+### Forgot Password
+POST http://localhost:3000/api/mobile/auth/forgot-password
+Content-Type: application/json
+
+{
+  "email": "test@agency.com"
+}
+
+### ============================================
+### 3. MOBILE APP - LEADS (Need Agency Token)
+### ============================================
+
+### Get All Leads (Replace YOUR_TOKEN)
+GET http://localhost:3000/api/mobile/leads?page=1&limit=10&status=assigned
+Authorization: Bearer YOUR_TOKEN_HERE
+
+### Get Single Lead by ID (Replace YOUR_TOKEN and LEAD_ID)
+GET http://localhost:3000/api/mobile/leads/LEAD_ID_HERE
+Authorization: Bearer YOUR_TOKEN_HERE
+
+### Accept a Lead (Replace YOUR_TOKEN and LEAD_ID)
+PUT http://localhost:3000/api/mobile/leads/LEAD_ID_HERE/accept
+Authorization: Bearer YOUR_TOKEN_HERE
+Content-Type: application/json
+
+{
+  "notes": "I will contact this lead"
+}
+
+### Reject a Lead (Replace YOUR_TOKEN and LEAD_ID)
+PUT http://localhost:3000/api/mobile/leads/LEAD_ID_HERE/reject
+Authorization: Bearer YOUR_TOKEN_HERE
+Content-Type: application/json
+
+{
+  "reason": "Not in my territory"
+}
+
+### Update Lead Status (Replace YOUR_TOKEN and LEAD_ID)
+PUT http://localhost:3000/api/mobile/leads/LEAD_ID_HERE/status
+Authorization: Bearer YOUR_TOKEN_HERE
+Content-Type: application/json
+
+{
+  "status": "contacted"
+}
+
+### Add Notes to Lead (Replace YOUR_TOKEN and LEAD_ID)
+POST http://localhost:3000/api/mobile/leads/LEAD_ID_HERE/notes
+Authorization: Bearer YOUR_TOKEN_HERE
+Content-Type: application/json
+
+{
+  "notes": "Called customer, interested in service"
+}
+
+### ============================================
+### 4. MOBILE APP - SUBSCRIPTIONS (Need Agency Token)
+### ============================================
+
+### Get Current Subscription (Replace YOUR_TOKEN)
+GET http://localhost:3000/api/mobile/subscription
+Authorization: Bearer YOUR_TOKEN_HERE
+
+### Get Subscription Status (Replace YOUR_TOKEN)
+GET http://localhost:3000/api/mobile/subscription/status
+Authorization: Bearer YOUR_TOKEN_HERE
+
+### Subscribe to Plan (Replace YOUR_TOKEN)
+POST http://localhost:3000/api/mobile/subscription/subscribe
+Authorization: Bearer YOUR_TOKEN_HERE
+Content-Type: application/json
+
+{
+  "plan_id": "PLAN_ID_HERE",
+  "payment_method_id": "pm_1234567890"
+}
+
+### Cancel Subscription (Replace YOUR_TOKEN)
+POST http://localhost:3000/api/mobile/subscription/cancel
+Authorization: Bearer YOUR_TOKEN_HERE
+Content-Type: application/json
+
+{
+  "reason": "No longer needed"
+}
+
+### Get Billing History (Replace YOUR_TOKEN)
+GET http://localhost:3000/api/mobile/billing/history?page=1&limit=10
+Authorization: Bearer YOUR_TOKEN_HERE
+
+### ============================================
+### 5. MOBILE APP - TERRITORIES (Need Agency Token)
+### ============================================
+
+### Get Agency Territories (Replace YOUR_TOKEN)
+GET http://localhost:3000/api/mobile/territories
+Authorization: Bearer YOUR_TOKEN_HERE
+
+### Add Territory (Replace YOUR_TOKEN)
+POST http://localhost:3000/api/mobile/territories
+Authorization: Bearer YOUR_TOKEN_HERE
+Content-Type: application/json
+
+{
+  "type": "zipcode",
+  "value": "12345",
+  "zipcode": "12345",
+  "city": "New York",
+  "state": "NY"
+}
+
+### Remove Territory (Replace YOUR_TOKEN and TERRITORY_ID)
+DELETE http://localhost:3000/api/mobile/territories/TERRITORY_ID_HERE
+Authorization: Bearer YOUR_TOKEN_HERE
+
+### ============================================
+### 6. ADMIN PORTAL - AUTHENTICATION
+### ============================================
+
+### Admin Login
+POST http://localhost:3000/api/admin/auth/login
+Content-Type: application/json
+
+{
+  "email": "admin@example.com",
+  "password": "admin_password_here"
+}
+
+### Refresh Admin Token (Replace YOUR_REFRESH_TOKEN)
+POST http://localhost:3000/api/admin/auth/refresh
+Content-Type: application/json
+
+{
+  "refreshToken": "YOUR_REFRESH_TOKEN_HERE"
+}
+
+### ============================================
+### 7. ADMIN PORTAL - AGENCIES (Need Admin Token)
+### ============================================
+
+### Get All Agencies (Replace YOUR_ADMIN_TOKEN)
+GET http://localhost:3000/api/admin/agencies?page=1&limit=25&status=active
+Authorization: Bearer YOUR_ADMIN_TOKEN_HERE
+
+### Get Single Agency (Replace YOUR_ADMIN_TOKEN and AGENCY_ID)
+GET http://localhost:3000/api/admin/agencies/AGENCY_ID_HERE
+Authorization: Bearer YOUR_ADMIN_TOKEN_HERE
+
+### Create New Agency (Replace YOUR_ADMIN_TOKEN)
+POST http://localhost:3000/api/admin/agencies
+Authorization: Bearer YOUR_ADMIN_TOKEN_HERE
+Content-Type: application/json
+
+{
+  "name": "New Agency",
+  "email": "newagency@example.com",
+  "business_name": "New Business Inc",
+  "phone": "555-1234",
+  "industry": "healthcare"
+}
+
+### Update Agency (Replace YOUR_ADMIN_TOKEN and AGENCY_ID)
+PUT http://localhost:3000/api/admin/agencies/AGENCY_ID_HERE
+Authorization: Bearer YOUR_ADMIN_TOKEN_HERE
+Content-Type: application/json
+
+{
+  "business_name": "Updated Business Name",
+  "phone": "555-5678"
+}
+
+### ============================================
+### 8. ADMIN PORTAL - LEADS (Need Admin Token)
+### ============================================
+
+### Get All Leads (Replace YOUR_ADMIN_TOKEN)
+GET http://localhost:3000/api/admin/leads?page=1&limit=25&status=new
+Authorization: Bearer YOUR_ADMIN_TOKEN_HERE
+
+### Get Lead Statistics (Replace YOUR_ADMIN_TOKEN)
+GET http://localhost:3000/api/admin/leads/stats
+Authorization: Bearer YOUR_ADMIN_TOKEN_HERE
+
+### Get Single Lead (Replace YOUR_ADMIN_TOKEN and LEAD_ID)
+GET http://localhost:3000/api/admin/leads/LEAD_ID_HERE
+Authorization: Bearer YOUR_ADMIN_TOKEN_HERE
+
+### Reassign Lead (Replace YOUR_ADMIN_TOKEN and LEAD_ID)
+PUT http://localhost:3000/api/admin/leads/LEAD_ID_HERE/reassign
+Authorization: Bearer YOUR_ADMIN_TOKEN_HERE
+Content-Type: application/json
+
+{
+  "agency_id": "AGENCY_ID_HERE",
+  "reason": "Better territory match"
+}
+
+### ============================================
+### 9. ADMIN PORTAL - SUBSCRIPTION PLANS (Need Admin Token)
+### ============================================
+
+### Get All Plans (Replace YOUR_ADMIN_TOKEN)
+GET http://localhost:3000/api/admin/subscriptions/plans?page=1&limit=50
+Authorization: Bearer YOUR_ADMIN_TOKEN_HERE
+
+### Create New Plan (Replace YOUR_ADMIN_TOKEN)
+POST http://localhost:3000/api/admin/subscriptions/plans
+Authorization: Bearer YOUR_ADMIN_TOKEN_HERE
+Content-Type: application/json
+
+{
+  "plan_name": "Premium Plan",
+  "description": "Premium subscription with more features",
+  "base_price": 199.00,
+  "base_units": 20,
+  "price_per_unit": 99.00,
+  "billing_cycle": "monthly",
+  "trial_days": 14,
+  "is_active": true
+}
+
+### ============================================
+### 10. ADMIN PORTAL - ANALYTICS (Need Admin Token)
+### ============================================
+
+### Get Dashboard Analytics (Replace YOUR_ADMIN_TOKEN)
+GET http://localhost:3000/api/admin/analytics
+Authorization: Bearer YOUR_ADMIN_TOKEN_HERE
+
+### Get Activity Logs (Replace YOUR_ADMIN_TOKEN)
+GET http://localhost:3000/api/admin/activity-logs?page=1&limit=50
+Authorization: Bearer YOUR_ADMIN_TOKEN_HERE
+
+### ============================================
+### NOTES FOR BEGINNERS:
+### ============================================
+### 
+### 1. Replace YOUR_TOKEN_HERE with actual token from login
+### 2. Replace IDs (LEAD_ID, AGENCY_ID, etc.) with real IDs
+### 3. Make sure server is running on port 3000
+### 4. For VS Code: Install "REST Client" extension
+### 5. Click "Send Request" above each request to test
+### 
+### ============================================
+

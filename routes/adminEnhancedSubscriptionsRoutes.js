@@ -64,7 +64,6 @@ router.get('/subscriptions/plans', async (req, res) => {
         base_units: plan.base_units ?? plan.min_units ?? 10,
         min_units: plan.min_units ?? plan.base_units ?? 10,
         max_units: plan.max_units ?? null,
-        additional_unit_price: plan.additional_unit_price ?? null,
         // Monthly price fields - most important for frontend
         base_price: monthlyPrice,
         basePrice: monthlyPrice,
@@ -83,7 +82,6 @@ router.get('/subscriptions/plans', async (req, res) => {
         updated_at: plan.updated_at,
         // Derived fields for frontend
         baseZipcodes: plan.base_units ?? plan.min_units ?? null,
-        additionalPrice: plan.additional_unit_price ?? null,
         maxZipcodes: plan.max_units ?? null,
         customPricing: plan.custom_pricing ?? plan.metadata?.customPricing ?? ''
       };
@@ -148,7 +146,6 @@ router.get('/subscriptions/plans/:id', async (req, res) => {
       base_units: plan.base_units ?? plan.min_units ?? 10,
       min_units: plan.min_units ?? plan.base_units ?? 10,
       max_units: plan.max_units ?? null,
-      additional_unit_price: plan.additional_unit_price ?? null,
       base_price: plan.base_price ?? (plan.price_per_unit && (plan.min_units || plan.base_units) ? Number(plan.price_per_unit) * Number(plan.min_units || plan.base_units) : null),
       basePrice: Number((plan.base_price ?? plan.price_per_unit) || 0),
       billing_cycle: plan.billing_cycle,
@@ -162,7 +159,6 @@ router.get('/subscriptions/plans/:id', async (req, res) => {
       created_at: plan.created_at,
       updated_at: plan.updated_at,
       baseZipcodes: plan.base_units ?? plan.min_units ?? null,
-      additionalPrice: plan.additional_unit_price ?? null,
       maxZipcodes: plan.max_units ?? null,
       customPricing: plan.custom_pricing ?? plan.metadata?.customPricing ?? ''
     };
@@ -193,7 +189,6 @@ router.post('/subscriptions/plans', async (req, res) => {
       base_units,
       unit_type,
       base_price,
-      additional_unit_price,
       max_units,
       trial_period_days,
       is_active,
@@ -220,7 +215,6 @@ router.post('/subscriptions/plans', async (req, res) => {
     const optionalFields = {
       base_units: base_units !== undefined ? parseInt(base_units) : undefined,
       unit_type: unit_type !== undefined ? unit_type : undefined,
-      additional_unit_price: additional_unit_price !== undefined ? parseFloat(additional_unit_price) : undefined,
       max_units: max_units !== undefined && max_units !== null ? parseInt(max_units) : undefined,
       description: description !== undefined ? description : undefined,
       // features may be JSON (array/object) or string; store as-is
@@ -231,7 +225,7 @@ router.post('/subscriptions/plans', async (req, res) => {
     // Compose attempt payload
     let attemptPayload = { ...baseInsert, ...Object.fromEntries(Object.entries(optionalFields).filter(([,v]) => v !== undefined)) };
     let data, error;
-  const dropOrder = ['features','custom_pricing','description','max_units','additional_unit_price','unit_type','base_units'];
+  const dropOrder = ['features','custom_pricing','description','max_units','unit_type','base_units'];
 
     for (let i = 0; i <= dropOrder.length; i++) {
       ({ data, error } = await supabase
@@ -259,10 +253,21 @@ router.post('/subscriptions/plans', async (req, res) => {
 
     if (error) throw error;
     
+    // After successful insert, fetch the complete plan data to return to frontend
+    // This ensures we return all fields including description, features, etc.
+    const { data: fullPlan, error: fetchError } = await supabase
+      .from('subscription_plans')
+      .select('*')
+      .eq('id', data.id)
+      .single();
+    
+    // Use full plan if available, otherwise use the minimal data
+    const planToReturn = fullPlan || data;
+    
     res.status(201).json({
       success: true,
       message: 'Subscription plan created successfully',
-      data: { plan: data }
+      data: { plan: planToReturn }
     });
   } catch (error) {
     console.error('Error creating subscription plan:', error);
@@ -293,9 +298,6 @@ router.put('/subscriptions/plans/:id', async (req, res) => {
     if (payload.unit_type !== undefined) updates.unit_type = payload.unit_type;
     if (payload.base_price !== undefined || payload.basePrice !== undefined) {
       updates.base_price = payload.base_price ?? payload.basePrice;
-    }
-    if (payload.additional_unit_price !== undefined || payload.additionalPrice !== undefined) {
-      updates.additional_unit_price = payload.additional_unit_price ?? payload.additionalPrice;
     }
     if (payload.max_units !== undefined || payload.maxZipcodes !== undefined) {
       updates.max_units = payload.max_units ?? payload.maxZipcodes;
@@ -337,7 +339,7 @@ router.put('/subscriptions/plans/:id', async (req, res) => {
         continue;
       }
       if ((error.code === 'PGRST204' || msg.includes('pgrst204')) && i < maxURetries - 1) {
-        const candidates = ['additional_unit_price','unit_type','max_units','trial_period_days','base_units','features','custom_pricing','is_custom','plan_name','description'];
+        const candidates = ['unit_type','max_units','trial_period_days','base_units','features','custom_pricing','is_custom','plan_name','description'];
         const toDrop = candidates.find(k => k in attemptUpdates);
         if (toDrop) {
           delete attemptUpdates[toDrop];
@@ -777,14 +779,15 @@ router.post('/subscriptions/plans/:id/calculate', async (req, res) => {
       });
     }
     
-    // Calculate pricing
+    // Calculate pricing - base price only (additional_unit_price removed)
     let totalPrice = parseFloat(plan.base_price);
     let additionalUnits = 0;
     
+    // Note: Additional units beyond base are included in base price
+    // If you need tiered pricing, upgrade to a higher plan
     if (total_units > plan.base_units) {
       additionalUnits = total_units - plan.base_units;
-      const additionalBlocks = Math.ceil(additionalUnits / plan.base_units);
-      totalPrice += (additionalBlocks * parseFloat(plan.additional_unit_price) * plan.base_units);
+      // No additional charge - base price covers all units
     }
     
     res.json({
