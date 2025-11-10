@@ -38,6 +38,30 @@ module.exports = (sequelize, DataTypes) => {
       allowNull: true,
       field: 'phone_number'
     },
+    industry: {
+      type: DataTypes.STRING(100),
+      allowNull: true
+    },
+    zipcodes: {
+      type: DataTypes.ARRAY(DataTypes.TEXT),
+      allowNull: true,
+      defaultValue: []
+    },
+    verificationStatus: {
+      type: DataTypes.STRING(50),
+      allowNull: true,
+      field: 'verification_status'
+    },
+    totalSpent: {
+      type: DataTypes.DECIMAL(10, 2),
+      allowNull: true,
+      field: 'total_spent'
+    },
+    conversionRate: {
+      type: DataTypes.DECIMAL(5, 2),
+      allowNull: true,
+      field: 'conversion_rate'
+    },
     verified: {
       type: DataTypes.BOOLEAN,
       defaultValue: false
@@ -48,7 +72,7 @@ module.exports = (sequelize, DataTypes) => {
       field: 'stripe_customer_id'
     },
     status: {
-      type: DataTypes.ENUM('active', 'suspended', 'deleted'),
+      type: DataTypes.STRING(50),
       defaultValue: 'active'
     },
     metadata: {

@@ -5,18 +5,10 @@ module.exports = (sequelize, DataTypes) => {
       defaultValue: DataTypes.UUIDV4,
       primaryKey: true
     },
-    industry: {
-      type: DataTypes.ENUM('healthcare_hospice', 'healthcare_homehealth', 'non_healthcare'),
-      allowNull: false
-    },
-    registryPortalId: {
-      type: DataTypes.UUID,
+    leadId: {
+      type: DataTypes.STRING(50),
       allowNull: true,
-      field: 'registry_portal_id',
-      references: {
-        model: 'registry_portals',
-        key: 'id'
-      }
+      field: 'lead_id'
     },
     portalId: {
       type: DataTypes.UUID,
@@ -74,119 +66,53 @@ module.exports = (sequelize, DataTypes) => {
       type: DataTypes.STRING(10),
       allowNull: true
     },
-    // Enhanced lead data structure
-    leadData: {
-      type: DataTypes.JSONB,
-      allowNull: false,
-      defaultValue: {},
-      field: 'lead_data'
-    },
-    // Contact info for deduplication
-    contactEmail: {
-      type: DataTypes.STRING(255),
+    propertyType: {
+      type: DataTypes.STRING(100),
       allowNull: true,
-      field: 'contact_email'
+      field: 'property_type'
     },
-    contactPhone: {
-      type: DataTypes.STRING(20),
+    budgetRange: {
+      type: DataTypes.STRING(100),
       allowNull: true,
-      field: 'contact_phone'
+      field: 'budget_range'
     },
-    // Slot management (Psychology: Scarcity principle)
-    maxSlots: {
-      type: DataTypes.INTEGER,
-      defaultValue: 3,
-      field: 'max_slots'
-    },
-    availableSlots: {
-      type: DataTypes.INTEGER,
-      defaultValue: 3,
-      field: 'available_slots'
-    },
-    // Pricing
-    pricePerSlot: {
-      type: DataTypes.DECIMAL(10, 2),
-      allowNull: false,
-      field: 'price_per_slot'
-    },
-    // Status & Lifecycle
-    status: {
-      type: DataTypes.ENUM('new', 'available', 'partially_sold', 'sold_out', 'expired', 'archived'),
-      defaultValue: 'new'
-    },
-    expiresAt: {
-      type: DataTypes.DATE,
+    preferredLocation: {
+      type: DataTypes.TEXT,
       allowNull: true,
-      field: 'expires_at'
+      field: 'preferred_location'
     },
-    // Deduplication
-    fingerprint: {
-      type: DataTypes.STRING(255),
+    timeline: {
+      type: DataTypes.STRING(100),
       allowNull: true
     },
-    rawPayload: {
-      type: DataTypes.JSONB,
+    needs: {
+      type: DataTypes.TEXT,
+      allowNull: true
+    },
+    additionalDetails: {
+      type: DataTypes.TEXT,
       allowNull: true,
-      field: 'raw_payload'
+      field: 'additional_details'
     },
     source: {
       type: DataTypes.STRING(100),
       allowNull: true
     },
-    priority: {
-      type: DataTypes.ENUM('low', 'medium', 'high', 'urgent'),
-      defaultValue: 'medium'
+    status: {
+      type: DataTypes.STRING(50),
+      defaultValue: 'new'
     },
-    notes: {
-      type: DataTypes.TEXT,
-      allowNull: true
-    },
-    isActive: {
-      type: DataTypes.BOOLEAN,
-      defaultValue: true,
-      field: 'is_active'
+    rawPayload: {
+      type: DataTypes.JSONB,
+      allowNull: true,
+      field: 'raw_payload'
     }
   }, {
     tableName: 'leads',
     timestamps: true,
     createdAt: 'created_at',
-    updatedAt: 'updated_at',
-    validate: {
-      availableSlotsValid() {
-        if (this.availableSlots < 0 || this.availableSlots > this.maxSlots) {
-          throw new Error('Available slots must be between 0 and max slots');
-        }
-      },
-      pricePerSlotValid() {
-        if (this.pricePerSlot <= 0) {
-          throw new Error('Price per slot must be greater than 0');
-        }
-      }
-    },
+    updatedAt: false,
     indexes: [
-      {
-        fields: ['industry', 'status']
-      },
-      {
-        fields: ['fingerprint']
-      },
-      {
-        fields: ['expires_at']
-      },
-      {
-        fields: ['available_slots'],
-        where: {
-          available_slots: {
-            [sequelize.Sequelize.Op.gt]: 0
-          }
-        }
-      },
-      {
-        fields: ['contact_email']
-      },
-      {
-        fields: ['contact_phone']
-      },
       {
         fields: ['status']
       },
@@ -200,11 +126,10 @@ module.exports = (sequelize, DataTypes) => {
         fields: ['email']
       },
       {
-        fields: ['phone_number']
+        fields: ['zipcode']
       },
       {
-        fields: ['lead_data'],
-        using: 'gin'
+        fields: ['city', 'state']
       }
     ]
   });
@@ -215,47 +140,5 @@ module.exports = (sequelize, DataTypes) => {
     return values;
   };
 
-  // Generate fingerprint for deduplication
-  Lead.prototype.generateFingerprint = function() {
-    const email = this.contactEmail || this.email || '';
-    const phone = this.contactPhone || this.phoneNumber || '';
-    const crypto = require('crypto');
-    return crypto.createHash('md5').update(`${email}:${phone}`).digest('hex');
-  };
-
-  // Check if lead is available for purchase
-  Lead.prototype.isAvailable = function() {
-    return this.status === 'available' && this.availableSlots > 0;
-  };
-
-  // Reserve a slot
-  Lead.prototype.reserveSlot = function() {
-    if (this.availableSlots > 0) {
-      this.availableSlots -= 1;
-      if (this.availableSlots === 0) {
-        this.status = 'sold_out';
-      } else if (this.availableSlots < this.maxSlots) {
-        this.status = 'partially_sold';
-      }
-      return true;
-    }
-    return false;
-  };
-
-  // Release a slot
-  Lead.prototype.releaseSlot = function() {
-    if (this.availableSlots < this.maxSlots) {
-      this.availableSlots += 1;
-      if (this.availableSlots === this.maxSlots) {
-        this.status = 'available';
-      } else if (this.availableSlots > 0) {
-        this.status = 'partially_sold';
-      }
-      return true;
-    }
-    return false;
-  };
-
   return Lead;
 };
-
