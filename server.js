@@ -100,17 +100,20 @@ dotenv.config({ path: path.join(__dirname, 'config.env') });
 dotenv.config({ path: path.join(__dirname, '..', 'config.env') });
 dotenv.config(); // Also try default .env location
 
-
+const app = express();
 const PORT = process.env.PORT || 3000;
 const NODE_ENV = process.env.NODE_ENV || 'development';
+
+
+app.listen(PORT, "0.0.0.0", () => {
+  console.log(`✅ Server running on port ${PORT}`);
+});
+
 
 console.log('🚀 Starting Lead Marketplace Unified Server...');
 console.log(`📝 Environment: ${NODE_ENV}`);
 console.log(`🔑 JWT Secret loaded: ${process.env.JWT_SECRET ? 'Yes' : 'No'}`);
 console.log(`🔐 Demo token enabled: ${NODE_ENV === 'development' ? 'Yes' : 'No'}`);
-
-
-
 
 // =====================================================
 // MIDDLEWARE SETUP
@@ -155,6 +158,102 @@ app.use(helmet({
   crossOriginEmbedderPolicy: false
 }));
 
+// CORS configuration
+// IMPORTANT: Handle OPTIONS requests BEFORE cors middleware to ensure custom headers are included
+app.use((req, res, next) => {
+  if (req.method === 'OPTIONS') {
+    const origin = req.headers.origin;
+    
+    // Allow localhost on any port in development
+    const isLocalhost = origin && (
+      origin.match(/^https?:\/\/localhost(:\d+)?$/) ||
+      origin.match(/^https?:\/\/127\.0\.0\.1(:\d+)?$/) ||
+      origin === 'http://localhost:8080' ||
+      origin === 'http://localhost:3002' ||
+      origin === 'http://localhost:3000'
+    );
+    
+    if (NODE_ENV === 'development' && isLocalhost) {
+      res.header('Access-Control-Allow-Origin', origin);
+    } else if (origin) {
+      res.header('Access-Control-Allow-Origin', origin);
+    } else {
+      res.header('Access-Control-Allow-Origin', '*');
+    }
+    
+    res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS, PATCH');
+    res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept, Origin, X-API-Key, x-api-key, X-Api-Key, x-apikey');
+    res.header('Access-Control-Allow-Credentials', 'true');
+    res.header('Access-Control-Max-Age', '86400'); // 24 hours
+    return res.status(200).end();
+  }
+  next();
+});
+
+app.use(cors({
+  origin: function (origin, callback) {
+    // Allow requests with no origin (like mobile apps or curl requests)
+    if (!origin) return callback(null, true);
+    
+    // Build allowed origins list from environment variables
+    const allowedOrigins = [];
+    
+    // Add FRONTEND_URL if provided
+    if (process.env.FRONTEND_URL) {
+      allowedOrigins.push(process.env.FRONTEND_URL);
+    }
+    
+    // Add BASE_URL if provided (and different from FRONTEND_URL)
+    if (process.env.BASE_URL && process.env.BASE_URL !== process.env.FRONTEND_URL) {
+      allowedOrigins.push(process.env.BASE_URL);
+    }
+    
+    // Add ALLOWED_ORIGINS if provided (comma-separated list)
+    if (process.env.ALLOWED_ORIGINS) {
+      const origins = process.env.ALLOWED_ORIGINS.split(',').map(url => url.trim());
+      allowedOrigins.push(...origins);
+    }
+    
+    // In development, allow localhost on any port
+    if (NODE_ENV === 'development') {
+      // Allow localhost on any port (including 8080)
+      if (origin.match(/^https?:\/\/localhost(:\d+)?$/)) {
+        return callback(null, true);
+      }
+      if (origin.match(/^https?:\/\/127\.0\.0\.1(:\d+)?$/)) {
+        return callback(null, true);
+      }
+      // Explicitly allow common development ports
+      if (origin === 'http://localhost:8080' || origin === 'http://localhost:3002' || origin === 'http://localhost:3000') {
+        return callback(null, true);
+      }
+    }
+    
+    if (allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    }
+    
+    callback(new Error('Not allowed by CORS'));
+  },
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+  allowedHeaders: [
+    'Content-Type', 
+    'Authorization', 
+    'X-Requested-With', 
+    'Accept', 
+    'Origin',
+    'X-API-Key',
+    'x-api-key',
+    'X-Api-Key',
+    'x-apikey'
+  ],
+  exposedHeaders: ['Content-Length', 'X-Foo', 'X-Bar'],
+  optionsSuccessStatus: 200, // some legacy browsers (IE11, various SmartTVs) choke on 204
+  preflightContinue: false // Don't continue to next middleware after handling OPTIONS
+}));
+
+// OPTIONS requests are already handled by the middleware above (before CORS)
 // CORS is already configured above - this duplicate middleware removed
 
 // Handle preflight OPTIONS requests for non-webhook routes (Express 5.x compatible)
@@ -490,15 +589,26 @@ app.get('/api/proxy', async (req, res) => {
 
     // Parse JSON if content type indicates JSON, otherwise return as text
     let parsedData;
-    if (contentType.includes('application/json')) {
+    if (contentType.includes('application/json') || contentType.includes('application/schema+json')) {
       try {
         parsedData = JSON.parse(data);
+        console.log(`✅ Parsed JSON response, type: ${typeof parsedData}, isArray: ${Array.isArray(parsedData)}`);
+        if (parsedData && typeof parsedData === 'object') {
+          console.log(`✅ Response has properties: ${!!parsedData.properties}, properties count: ${parsedData.properties ? Object.keys(parsedData.properties).length : 0}`);
+        }
       } catch (e) {
+        console.warn('⚠️ JSON parsing failed, returning as text:', e.message);
         // If JSON parsing fails, return as text
         parsedData = data;
       }
     } else {
-      parsedData = data;
+      // Try to parse as JSON anyway (some APIs don't set content-type correctly)
+      try {
+        parsedData = JSON.parse(data);
+        console.log(`✅ Parsed JSON despite content-type (${contentType})`);
+      } catch (e) {
+        parsedData = data;
+      }
     }
     
     res.json({
@@ -1194,9 +1304,13 @@ app.post("/api/create-portal", async (req, res) => {
       console.log("🔄 Generated unique slug:", portalSlug);
     }
 
-    // Generate webhook URL automatically
-    const baseUrl = process.env.BASE_API_URL || process.env.BASE_URL || process.env.FRONTEND_URL || `http://localhost:${PORT}`;
+    // Generate webhook URL automatically - use BASE_API_URL (backend API URL)
+    // Priority: BASE_API_URL > BASE_URL > construct from PORT
+    const baseUrl = process.env.BASE_API_URL || 
+                    process.env.BASE_URL || 
+                    (process.env.PORT ? `http://localhost:${process.env.PORT}` : `http://localhost:${PORT}`);
     const generated_webhook_url = `${baseUrl}/api/webhooks/${portalCode}`;
+    console.log(`🔗 Generated webhook URL: ${generated_webhook_url} (using baseUrl: ${baseUrl})`);
 
     // Prepare insert data (only include fields that exist in Supabase schema)
     const portalData = {
@@ -1380,8 +1494,12 @@ app.post("/api/portals", async (req, res) => {
     // Generate unique code, api key, and webhook URL
     const portal_code = body.portal_code || generateSlug(body.portal_name);
     const api_key = generateApiKey();
-    const baseUrl = process.env.BASE_API_URL || process.env.BASE_URL || process.env.FRONTEND_URL || `http://localhost:${PORT}`;
+    // Generate webhook URL - use BASE_API_URL (backend API URL)
+    const baseUrl = process.env.BASE_API_URL || 
+                    process.env.BASE_URL || 
+                    (process.env.PORT ? `http://localhost:${process.env.PORT}` : `http://localhost:${PORT}`);
     const generated_webhook_url = `${baseUrl}/api/webhooks/${portal_code}`;
+    console.log(`🔗 Generated webhook URL: ${generated_webhook_url} (using baseUrl: ${baseUrl})`);
 
     // Generate portal slug (required by database)
     const portal_slug = body.slug || generateSlug(body.portal_name) || generateSlug(portal_code) || portal_code.toLowerCase().replace(/[^a-z0-9-]/g, '-');
@@ -1449,6 +1567,148 @@ app.post("/api/portals", async (req, res) => {
 
 
 
+/**
+ * POST /api/leads/:portalId
+ * Unified endpoint to receive lead data from any portal
+ * Normalizes different schemas into common fields
+ */
+app.post('/api/leads/:portalId', async (req, res) => {
+  try {
+    const { portalId } = req.params;
+    const payload = req.body;
+
+    // Import unified lead service
+    const unifiedLeadService = require('./services/unifiedLeadService');
+    const schemaMappingService = require('./services/schemaMappingService');
+
+    console.log(`📥 Received lead data from portal: ${portalId}`);
+    console.log('📦 Payload:', JSON.stringify(payload, null, 2));
+
+    // Optional: Get portal code from database if needed
+    let portalCode = null;
+    try {
+      const { data: portal } = await supabase
+        .from('portals')
+        .select('portal_code')
+        .eq('id', portalId)
+        .single();
+      if (portal) {
+        portalCode = portal.portal_code;
+      }
+    } catch (err) {
+      console.warn('⚠️ Could not fetch portal code, using portalId as code');
+      portalCode = portalId;
+    }
+
+    // Optional: Get custom mapping for this portal (future enhancement)
+    // For now, use default mappings
+    const customMapping = null;
+
+    // Create unified lead
+    const result = await unifiedLeadService.createLead(payload, portalId, portalCode, customMapping);
+
+    console.log('✅ Unified lead created:', result.id);
+
+    return res.status(201).json({
+      success: true,
+      message: 'Lead created successfully',
+      data: {
+        lead_id: result.id,
+        lead: result.lead
+      }
+    });
+  } catch (error) {
+    console.error('❌ Error creating unified lead:', error);
+    return res.status(400).json({
+      success: false,
+      message: error.message || 'Failed to create lead',
+      error: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    });
+  }
+});
+
+/**
+ * GET /api/leads
+ * Get all leads with optional filtering
+ */
+app.get('/api/leads', async (req, res) => {
+  try {
+    const unifiedLeadService = require('./services/unifiedLeadService');
+    
+    const filters = {
+      portal_id: req.query.portal_id,
+      portal_code: req.query.portal_code,
+      name: req.query.name,
+      phone: req.query.phone,
+      email: req.query.email,
+      city: req.query.city,
+      state: req.query.state,
+      zipcode: req.query.zipcode,
+      start_date: req.query.start_date,
+      end_date: req.query.end_date,
+      limit: parseInt(req.query.limit) || 100
+    };
+
+    // Remove undefined filters
+    Object.keys(filters).forEach(key => {
+      if (filters[key] === undefined) {
+        delete filters[key];
+      }
+    });
+
+    const result = await unifiedLeadService.getLeads(filters);
+
+    return res.json({
+      success: true,
+      count: result.count,
+      leads: result.leads
+    });
+  } catch (error) {
+    console.error('❌ Error fetching leads:', error);
+    return res.status(500).json({
+      success: false,
+      message: error.message || 'Failed to fetch leads'
+    });
+  }
+});
+
+/**
+ * GET /api/leads/:id
+ * Get a specific lead by ID
+ */
+app.get('/api/leads/:id', async (req, res) => {
+  try {
+    const unifiedLeadService = require('./services/unifiedLeadService');
+    const leadId = parseInt(req.params.id);
+
+    if (isNaN(leadId)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid lead ID'
+      });
+    }
+
+    const result = await unifiedLeadService.getLeadById(leadId);
+
+    return res.json({
+      success: true,
+      lead: result.lead
+    });
+  } catch (error) {
+    console.error('❌ Error fetching lead:', error);
+    if (error.message === 'Lead not found') {
+      return res.status(404).json({
+        success: false,
+        message: 'Lead not found'
+      });
+    }
+    return res.status(500).json({
+      success: false,
+      message: error.message || 'Failed to fetch lead'
+    });
+  }
+});
+
 app.post('/api/webhooks/:portal_code', async (req, res) => {
   // Import services dynamically to avoid circular dependencies
   const leadIngestionService = require('./services/leadIngestionService');
@@ -1456,22 +1716,50 @@ app.post('/api/webhooks/:portal_code', async (req, res) => {
   const auditService = require('./services/auditService');
 
   const { portal_code } = req.params;
-  const apiKey = req.headers['x-api-key'];
+  // Read API key from either header format (case-insensitive)
+  // Try multiple variations to handle different client implementations
+  const apiKey = req.headers['x-api-key'] || 
+                 req.headers['X-API-Key'] || 
+                 req.headers['x-apikey'] || 
+                 req.headers['X-Api-Key'] ||
+                 req.headers['x_api_key'] ||
+                 req.headers['X_API_KEY'];
+  
   const startTime = Date.now();
 
+  // Log which header format was used (for debugging)
+  const usedHeader = req.headers['x-api-key'] ? 'x-api-key' :
+                     req.headers['X-API-Key'] ? 'X-API-Key' :
+                     req.headers['x-apikey'] ? 'x-apikey' :
+                     req.headers['X-Api-Key'] ? 'X-Api-Key' :
+                     req.headers['x_api_key'] ? 'x_api_key' :
+                     req.headers['X_API_KEY'] ? 'X_API_KEY' : 'none';
+
   try {
-    // ✅ Step 1: Authenticate webhook
+    // Step 1: Authenticate webhook (00:00.150)
     if (!apiKey) {
+      console.log('❌ Webhook authentication failed - Missing API key');
+      console.log('   Available headers:', Object.keys(req.headers).filter(h => h.toLowerCase().includes('api')));
       await auditService.logWebhook(null, portal_code, req.body, 'failed', 'Missing API key');
       return res.status(401).json({ success: false, message: 'Missing API key' });
     }
+    
+    console.log(`✅ API key found in header: ${usedHeader}`);
 
     const { data: portal, error: portalError } = await supabase
       .from('portals')
-      .select('id, portal_name, industry, portal_status')
+      .select('id, portal_name, industry, portal_status, portal_code, api_key')
       .eq('portal_code', portal_code)
       .eq('api_key', apiKey)
       .single();
+    
+    console.log('🔍 Webhook authentication:', {
+      portal_code,
+      has_api_key: !!apiKey,
+      portal_found: !!portal,
+      portal_id: portal?.id,
+      portal_status: portal?.portal_status
+    });
 
     if (portalError || !portal) {
       await auditService.logWebhook(null, portal_code, req.body, 'failed', 'Invalid API key or portal');
@@ -1483,122 +1771,138 @@ app.post('/api/webhooks/:portal_code', async (req, res) => {
       return res.status(403).json({ success: false, message: 'Portal is not active' });
     }
 
-    // ✅ Step 2: Log webhook reception
+    // Step 2: Log webhook reception (00:00.200)
     await auditService.logWebhook(portal.id, portal_code, req.body, 'success', 'Webhook received');
 
-    // ✅ Step 3: Transform data
-    const transformedData = leadIngestionService.transformData(req.body, portal);
+    // Step 3: Log received payload
+    console.log('📦 Raw webhook payload:', JSON.stringify(req.body, null, 2));
+    console.log('📦 Received fields:', Object.keys(req.body));
 
-    // ✅ Step 4: Validate
-    const validation = leadIngestionService.validate(transformedData);
-    if (!validation.valid) {
+    // Step 4: Process lead ingestion (create lead in unified_leads table) (00:00.450)
+    // Note: unifiedLeadService handles normalization and doesn't require strict validation
+    // It accepts any fields and maps them to common fields automatically
+    // Use unified lead service to store in unified_leads table
+    const unifiedLeadService = require('./services/unifiedLeadService');
+    const leadIdGenerator = require('./utils/leadIdGenerator');
+    
+    try {
+      // Convert portal UUID to string for unified_leads table (which uses VARCHAR)
+      const portalIdStr = portal.id.toString();
+      
+      // Create lead in unified_leads table
+      const unifiedLeadResult = await unifiedLeadService.createLead(
+        req.body,  // Raw payload - will be normalized by schema mapping
+        portalIdStr,
+        portal.portal_code || portal_code,
+        null  // No custom mapping for now
+      );
+
+      if (!unifiedLeadResult.success) {
+        throw new Error(unifiedLeadResult.message || 'Failed to create unified lead');
+      }
+
+      const leadId = unifiedLeadResult.id;
+      console.log('✅ Unified lead created:', leadId);
+
+      // Generate unique sequential lead ID (e.g., LEAD-00008)
+      const uniqueLeadId = await leadIdGenerator.generateNextLeadId();
+      console.log('✅ Generated unique lead ID:', uniqueLeadId);
+
+      // Prepare lead data for audit_logs table
+      const leadDataForAudit = {
+        id: unifiedLeadResult.lead.id || leadId,
+        email: unifiedLeadResult.lead.email || req.body.email || null,
+        needs: req.body.needs || req.body.care_need || req.body.careNeed || null,
+        source: req.body.source || portal.portal_name || 'webhook',
+        status: 'pending',
+        lead_id: uniqueLeadId,
+        timeline: req.body.timeline || null,
+        lead_name: unifiedLeadResult.lead.name || req.body.name || req.body.lead_name || null,
+        portal_id: portal.id,
+        created_at: new Date().toISOString(),
+        raw_payload: req.body,
+        budget_range: req.body.budget_range || null,
+        phone_number: unifiedLeadResult.lead.phone || req.body.phone || null,
+        property_type: req.body.property_type || null,
+        additional_details: req.body.additional_details || null,
+        preferred_location: req.body.preferred_location || null
+      };
+
+      // 🔄 Round-robin agency assignment
+      const leadIngestionService = require('./services/leadIngestionService');
+      const assignedAgencyId = await leadIngestionService.getNextAgency();
+
+      // Save to audit_logs table with unique lead ID and assigned agency
+      const { data: auditLogData, error: auditLogError } = await supabase
+        .from('audit_logs')
+        .insert([{
+          lead_id: uniqueLeadId,
+          lead_data: leadDataForAudit,
+          agency_id: assignedAgencyId,
+          time_stamp: new Date().toISOString(),
+          action_status: assignedAgencyId ? 'assigned' : 'unassigned'
+        }])
+        .select()
+        .single();
+
+      if (auditLogError) {
+        console.error('❌ Error saving to audit_logs:', auditLogError);
+        // Don't fail the request, just log the error
+      } else {
+        console.log('✅ Saved to audit_logs with unique ID:', uniqueLeadId);
+      }
+
+      // Log lead creation (to admin_activity_logs)
       await auditService.log({
-        action: 'lead_validation_failed',
+        action: 'lead_created',
         resource_type: 'lead',
-        resource_id: null,
-        metadata: { portal_id: portal.id, errors: validation.errors },
-        status: 'failed',
-        message: 'Lead validation failed'
+        resource_id: uniqueLeadId, // Use the unique sequential ID
+        metadata: { 
+          portal_id: portal.id, 
+          portal_code: portal_code,
+          lead_data: unifiedLeadResult.lead,
+          unique_lead_id: uniqueLeadId
+        },
+        status: 'success',
+        message: 'Lead created in unified_leads table'
       });
-      return res.status(400).json({
-        success: false,
-        message: 'Lead validation failed',
-        errors: validation.errors
+
+      // Step 6: Return success response
+      // Note: Lead distribution can be added later if needed for unified_leads
+      const processingTime = Date.now() - startTime;
+      
+      return res.status(200).json({
+        success: true,
+        message: 'Lead received successfully and stored in unified_leads',
+        data: {
+          lead_id: leadId,
+          unique_lead_id: uniqueLeadId, // Include the sequential unique ID
+          lead: unifiedLeadResult.lead,
+          processing_time_ms: processingTime
+        }
       });
-    }
 
-    // ✅ Step 5: Process lead ingestion
-    const leadResult = await leadIngestionService.processLead(req.body, portal);
-
-    if (!leadResult.success) {
+    } catch (error) {
+      console.error('❌ Error creating unified lead:', error);
       await auditService.log({
         action: 'lead_creation_failed',
         resource_type: 'lead',
         resource_id: null,
-        metadata: { portal_id: portal.id, reason: leadResult.message },
-        status: 'failed'
+        metadata: { 
+          portal_id: portal.id, 
+          portal_code: portal_code,
+          reason: error.message,
+          received_fields: Object.keys(req.body)
+        },
+        status: 'failed',
+        message: 'Failed to create unified lead'
       });
       return res.status(400).json({
         success: false,
-        message: leadResult.message,
-        errors: leadResult.errors || []
+        message: error.message || 'Failed to create unified lead',
+        errors: []
       });
     }
-
-    const leadId = leadResult.lead_id;
-
-    // ✅ Log lead creation
-    await auditService.logLeadCreation(leadId, portal.id, transformedData);
-
-    // ✅ Step 6: Try to distribute lead automatically
-    const { data: createdLead, error: leadFetchError } = await supabase
-      .from('leads')
-      .select('*')
-      .eq('id', leadId)
-      .single();
-
-    if (!leadFetchError && createdLead) {
-      const distributionResult = await leadDistributionService.distributeLead(createdLead);
-
-      if (distributionResult.success) {
-        await auditService.logLeadAssignment(
-          leadId,
-          distributionResult.agency_id,
-          distributionResult.assignment_id
-        );
-
-        const processingTime = Date.now() - startTime;
-        return res.status(200).json({
-          success: true,
-          message: 'Lead received and distributed successfully',
-          data: {
-            lead_uuid: leadId,
-            lead_id: createdLead.lead_id || null,
-            assigned_to_agency: distributionResult.agency_id,
-            assignment_id: distributionResult.assignment_id,
-            processing_time_ms: processingTime
-          }
-        });
-      } else {
-        const processingTime = Date.now() - startTime;
-        return res.status(200).json({
-          success: true,
-          message: 'Lead received successfully but not yet assigned',
-          warning: distributionResult.message,
-          data: {
-            lead_uuid: leadId,
-            lead_id: createdLead.lead_id || null,
-            processing_time_ms: processingTime
-          }
-        });
-      }
-    }
-
-    // ✅ Lead created but distribution failed or not found
-    const { data: createdLeadFull, error: fetchError } = await supabase
-      .from('leads')
-      .select('id, lead_id, lead_name, email, phone_number, created_at')
-      .eq('id', leadId)
-      .single();
-
-    if (fetchError) {
-      console.warn('⚠️ Could not fetch created lead_id:', fetchError.message);
-    }
-
-    const processingTime = Date.now() - startTime;
-    return res.status(200).json({
-      success: true,
-      message: 'Lead received successfully',
-      data: {
-        lead_uuid: leadId,
-        lead_id: createdLeadFull?.lead_id || null,
-        lead_name: createdLeadFull?.lead_name || null,
-        email: createdLeadFull?.email || null,
-        phone_number: createdLeadFull?.phone_number || null,
-        processing_time_ms: processingTime
-      }
-    });
-
   } catch (error) {
     console.error('❌ Webhook processing error:', error);
     await auditService.log({
@@ -1617,7 +1921,6 @@ app.post('/api/webhooks/:portal_code', async (req, res) => {
     });
   }
 });
-
 
 
 

@@ -1,65 +1,102 @@
 /**
- * Mobile Territory Controller
- * Handles agency territory-related requests for mobile app
+ * Mobile Territory Controller (Refactored)
+ * Handles agency territory management using agencies.territories JSONB field
+ * Date: 2025-11-10
  */
 
 const supabase = require('../config/supabaseClient');
+const crypto = require('crypto');
 
 /**
  * GET /api/mobile/territories
- * Get agency's current territories
+ * Get agency's current territories from agencies.territories JSONB
  */
 exports.getAgencyTerritories = async (req, res) => {
   try {
     const agencyId = req.agency.id;
     const { isActive, type, state, search } = req.query;
 
-    let query = supabase
-      .from('territories')
-      .select('*, subscription:subscriptions(id, status, subscription_plans(plan_name))')
-      .eq('agency_id', agencyId)
-      .order('priority', { ascending: false })
-      .order('created_at', { ascending: true });
+    // Fetch agency with territories
+    const { data: agency, error } = await supabase
+      .from('agencies')
+      .select('id, territories, territory_count, territory_limit, primary_zipcodes, primary_cities')
+      .eq('id', agencyId)
+      .single();
 
-    if (isActive !== undefined) query = query.eq('is_active', isActive === 'true');
-    if (type) query = query.eq('type', type);
-    if (state) query = query.eq('state', state);
-    if (search) query = query.or(`value.ilike.%${search}%,city.ilike.%${search}%,zipcode.ilike.%${search}%`);
-
-    const { data: territories, error } = await query;
     if (error) throw error;
+    if (!agency) {
+      return res.status(404).json({
+        success: false,
+        message: 'Agency not found'
+      });
+    }
 
-    const shaped = (territories || []).map(t => ({
-          id: t.id,
-          type: t.type,
-          value: t.value,
-          state: t.state,
-          county: t.county || t.country || null,
-          city: t.city || null,
-          zipcode: t.zipcode || null,
-          isActive: t.is_active,
-          priority: t.priority,
-          addedDate: t.created_at,
-          lastUpdated: t.updated_at,
-          subscription: t.subscription ? {
-            id: t.subscription.id,
-            status: t.subscription.status,
-            planName: t.subscription.subscription_plans?.plan_name || null
-          } : null
-        }));
+    let territories = agency.territories || [];
 
-    // Backward-compat for Flutter TerritoryService: provide top-level zipcodes array
-    const zipcodes = shaped
-      .filter(t => t.type === 'zipcode' && (t.zipcode || t.value))
-      .map(t => t.zipcode || t.value)
-      .filter(Boolean);
+    // Apply filters
+    if (isActive !== undefined) {
+      const activeFilter = isActive === 'true';
+      territories = territories.filter(t => 
+        t.is_active === activeFilter && !t.deleted_at
+      );
+    } else {
+      // Default: only return active, non-deleted
+      territories = territories.filter(t => t.is_active && !t.deleted_at);
+    }
+
+    if (type) {
+      territories = territories.filter(t => t.type === type);
+    }
+
+    if (state) {
+      territories = territories.filter(t => t.state === state);
+    }
+
+    if (search) {
+      const searchLower = search.toLowerCase();
+      territories = territories.filter(t => 
+        (t.value && t.value.toLowerCase().includes(searchLower)) ||
+        (t.city && t.city.toLowerCase().includes(searchLower)) ||
+        (t.zipcode && t.zipcode.toLowerCase().includes(searchLower))
+      );
+    }
+
+    // Sort by priority (descending) then by added_at
+    territories.sort((a, b) => {
+      if (b.priority !== a.priority) {
+        return (b.priority || 0) - (a.priority || 0);
+      }
+      return new Date(b.added_at || 0) - new Date(a.added_at || 0);
+    });
+
+    // Shape response for mobile
+    const shaped = territories.map(t => ({
+      id: t.id,
+      type: t.type,
+      value: t.value,
+      state: t.state,
+      county: t.county || null,
+      city: t.city || null,
+      zipcode: t.zipcode || null,
+      isActive: t.is_active,
+      priority: t.priority || 0,
+      addedDate: t.added_at,
+      lastUpdated: agency.territories_updated_at || t.added_at,
+      subscription: t.subscription_id ? {
+        id: t.subscription_id
+      } : null
+    }));
+
+    // Backward-compat: provide top-level zipcodes array
+    const zipcodes = agency.primary_zipcodes || [];
 
     res.status(200).json({
       success: true,
       data: {
         territories: shaped,
-        totalCount: territories ? territories.length : 0,
-        activeCount: (territories || []).filter(t => t.is_active).length
+        totalCount: shaped.length,
+        activeCount: shaped.filter(t => t.isActive).length,
+        limit: agency.territory_limit || 0
       },
       zipcodes
     });
@@ -74,269 +111,334 @@ exports.getAgencyTerritories = async (req, res) => {
   }
 };
 
-const clampLimit = (value, min = 1, max = 100) => {
-  const numeric = Number.parseInt(value, 10);
-  if (Number.isNaN(numeric)) return min;
-  return Math.min(Math.max(numeric, min), max);
-};
-
-const sanitizeSearchTerm = (value = '') => value
-  .toString()
-  .replace(/[%_]/g, (match) => `\\${match}`)
-  .replace(/[\r\n]+/g, ' ')
-  .trim();
-
-const toNumber = (value, fallback = 0) => {
-  const numeric = Number.parseFloat(value);
-  return Number.isFinite(numeric) ? numeric : fallback;
-};
-
-const mapTerritoryRecord = (record = {}) => ({
-  id: record.id,
-  type: record.type,
-  value: record.value,
-  state: record.state || null,
-  county: record.county || record.country || null,
-  city: record.city || null,
-  zipcode: record.zipcode || null,
-  isActive: record.is_active !== false,
-  priority: record.priority ?? null,
-  addedDate: record.created_at || null,
-  lastUpdated: record.updated_at || null
-});
-
-const logAuditEvent = async (req, { action, resourceId, metadata }) => {
-  try {
-    await supabase.from('audit_logs').insert([
-      {
-        actor_id: req.agency?.id || 'unknown-agency',
-        actor_email: req.agency?.email || null,
-        action,
-        resource_type: 'TERRITORY',
-        resource_id: resourceId,
-        metadata: {
-          ...(metadata || {}),
-          ip: req.ip,
-          userAgent: req.get('User-Agent') || null
-        },
-        created_at: new Date().toISOString()
-      }
-    ]);
-  } catch (auditError) {
-    console.warn('Failed to write audit log:', auditError.message);
-  }
-};
-
 /**
- * GET /api/mobile/territories/available
- * Get territories available for claiming
+ * POST /api/mobile/territories
+ * Add a new territory to agency
  */
-exports.getAvailableTerritories = async (req, res) => {
+exports.addTerritory = async (req, res) => {
   try {
-    const {
-      state,
-      type,
-      search,
-      page = 1,
-      limit = 50
-    } = req.query;
+    const agencyId = req.agency.id;
+    const { type, value, state, county, city, zipcode, priority, subscription_id } = req.body;
 
-    const currentPage = Math.max(Number.parseInt(page, 10) || 1, 1);
-    const pageSize = clampLimit(limit, 1, 200);
-    const offset = (currentPage - 1) * pageSize;
-    const sanitizedSearch = search ? sanitizeSearchTerm(search) : '';
-
-    let query = supabase
-      .from('territories')
-      .select('id, type, value, state, county, city, zipcode, is_active, priority, created_at, updated_at', { count: 'exact' })
-      .eq('is_active', false)
-      .order('state', { ascending: true })
-      .order('city', { ascending: true })
-      .order('value', { ascending: true })
-      .limit(pageSize * 2); // fetch some extra before mixing with samples
-
-    if (state) {
-      query = query.eq('state', state);
+    // Validation
+    if (!type || !value) {
+      return res.status(400).json({
+        success: false,
+        message: 'Territory type and value are required'
+      });
     }
 
-    if (type) {
-      query = query.eq('type', type);
+    if (!['zipcode', 'city', 'county', 'state'].includes(type)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid territory type. Must be: zipcode, city, county, or state'
+      });
     }
 
-    if (sanitizedSearch) {
-      query = query.or([
-        `value.ilike.%${sanitizedSearch}%`,
-        `city.ilike.%${sanitizedSearch}%`,
-        `zipcode.ilike.%${sanitizedSearch}%`
-      ].join(','));
-    }
+    // Fetch current agency data
+    const { data: agency, error: fetchError } = await supabase
+      .from('agencies')
+      .select('id, territories, territory_count, territory_limit')
+      .eq('id', agencyId)
+      .single();
 
-    const { data: dbTerritories, error } = await query;
-    if (error) throw error;
+    if (fetchError) throw fetchError;
 
-    const baseTerritories = (dbTerritories || []).map(mapTerritoryRecord);
+    const currentTerritories = agency.territories || [];
 
-    // Provide a handful of sample territories so the UI always shows choices
-    const sampleTerritories = [
-      { id: 'sample-1', type: 'zipcode', value: '75201', state: 'TX', city: 'Dallas', zipcode: '75201', is_active: false },
-      { id: 'sample-2', type: 'zipcode', value: '75202', state: 'TX', city: 'Dallas', zipcode: '75202', is_active: false },
-      { id: 'sample-3', type: 'city', value: 'Austin', state: 'TX', city: 'Austin', is_active: false }
-    ].map(mapTerritoryRecord);
-
-    const merged = [...baseTerritories, ...sampleTerritories];
-    const uniqueByKey = Array.from(
-      merged.reduce((acc, item) => {
-        const key = `${item.type || 'unknown'}::${item.value || item.zipcode || item.city || item.id}`;
-        if (!acc.has(key)) acc.set(key, item);
-        return acc;
-      }, new Map()).values()
+    // Check if territory already exists
+    const exists = currentTerritories.some(t => 
+      t.type === type && 
+      t.value === value && 
+      t.is_active && 
+      !t.deleted_at
     );
 
-    const paged = uniqueByKey.slice(offset, offset + pageSize);
-    const totalPages = uniqueByKey.length === 0
-      ? 0
-      : Math.ceil(uniqueByKey.length / pageSize);
+    if (exists) {
+      return res.status(409).json({
+        success: false,
+        message: 'Territory already exists'
+      });
+    }
 
-    res.status(200).json({
+    // Check territory limit
+    const activeCount = currentTerritories.filter(t => t.is_active && !t.deleted_at).length;
+    if (agency.territory_limit > 0 && activeCount >= agency.territory_limit) {
+      return res.status(403).json({
+        success: false,
+        message: `Territory limit reached. Maximum: ${agency.territory_limit}`
+      });
+    }
+
+    // Create new territory object
+    const newTerritory = {
+      id: crypto.randomUUID(),
+      type,
+      value,
+      state: state || null,
+      county: county || null,
+      city: city || null,
+      zipcode: zipcode || (type === 'zipcode' ? value : null),
+      is_active: true,
+      priority: priority || 0,
+      subscription_id: subscription_id || null,
+      added_at: new Date().toISOString(),
+      metadata: {}
+    };
+
+    // Add to territories array
+    const updatedTerritories = [...currentTerritories, newTerritory];
+
+    // Update agency
+    const { data: updated, error: updateError } = await supabase
+      .from('agencies')
+      .update({ territories: updatedTerritories })
+      .eq('id', agencyId)
+      .select()
+      .single();
+
+    if (updateError) throw updateError;
+
+    // Log audit event
+    await logAuditEvent(req, {
+      action: 'ADD_TERRITORY',
+      resourceId: newTerritory.id,
+      metadata: { type, value, state }
+    });
+
+    res.status(201).json({
       success: true,
+      message: 'Territory added successfully',
       data: {
-        territories: paged,
-        pagination: {
-          page: currentPage,
-          limit: pageSize,
-          total: uniqueByKey.length,
-          totalPages
-        }
+        id: newTerritory.id,
+        type: newTerritory.type,
+        value: newTerritory.value,
+        state: newTerritory.state,
+        county: newTerritory.county,
+        city: newTerritory.city,
+        zipcode: newTerritory.zipcode,
+        isActive: newTerritory.is_active,
+        priority: newTerritory.priority,
+        addedDate: newTerritory.added_at
       }
     });
+
   } catch (error) {
-    console.error('Error in getAvailableTerritories:', error);
+    console.error('Error in addTerritory:', error);
     res.status(500).json({
       success: false,
-      message: 'Internal server error',
+      message: 'Failed to add territory',
       error: process.env.NODE_ENV === 'development' ? error.message : 'Something went wrong'
     });
   }
 };
 
 /**
- * POST /api/mobile/territories
- * Add a zipcode territory for the authenticated agency (Flutter compatibility)
+ * PUT /api/mobile/territories/:id
+ * Update a territory (priority, status, etc.)
  */
-exports.addTerritory = async (req, res) => {
+exports.updateTerritory = async (req, res) => {
   try {
     const agencyId = req.agency.id;
-    const { zipcode, city } = req.body || {};
+    const territoryId = req.params.id;
+    const { priority, is_active, metadata } = req.body;
 
-    if (!zipcode) {
-      return res.status(400).json({ success: false, message: 'zipcode is required' });
-    }
-
-    // Find active/trial subscription
-    const { data: subscription, error: subErr } = await supabase
-      .from('subscriptions')
-      .select('id, status')
-      .eq('agency_id', agencyId)
-      .in('status', ['trial','active'])
-      .order('created_at', { ascending: false })
-      .limit(1)
+    // Fetch current agency data
+    const { data: agency, error: fetchError } = await supabase
+      .from('agencies')
+      .select('id, territories')
+      .eq('id', agencyId)
       .single();
 
-    if (subErr || !subscription) {
-      return res.status(400).json({ success: false, message: 'No active subscription found' });
+    if (fetchError) throw fetchError;
+
+    let territories = agency.territories || [];
+    const territoryIndex = territories.findIndex(t => t.id === territoryId);
+
+    if (territoryIndex === -1) {
+      return res.status(404).json({
+        success: false,
+        message: 'Territory not found'
+      });
     }
 
-    // Check duplicate
-    const { data: existing } = await supabase
-      .from('territories')
-      .select('id')
-      .eq('agency_id', agencyId)
-      .eq('type', 'zipcode')
-      .or(`value.eq.${zipcode},zipcode.eq.${zipcode}`)
-      .eq('is_active', true)
-      .limit(1);
-
-    if (existing && existing.length > 0) {
-      return res.status(409).json({ success: false, message: 'Territory already exists' });
+    // Update territory
+    if (priority !== undefined) {
+      territories[territoryIndex].priority = priority;
+    }
+    if (is_active !== undefined) {
+      territories[territoryIndex].is_active = is_active;
+    }
+    if (metadata) {
+      territories[territoryIndex].metadata = {
+        ...territories[territoryIndex].metadata,
+        ...metadata
+      };
     }
 
-    // Insert territory
-    const insertPayload = {
-      subscription_id: subscription.id,
-      agency_id: agencyId,
-      type: 'zipcode',
-      value: String(zipcode),
-      zipcode: String(zipcode),
-      city: city || null,
-      is_active: true,
-      priority: 5,
-      metadata: { source: 'flutter_app' }
-    };
+    // Update agency
+    const { error: updateError } = await supabase
+      .from('agencies')
+      .update({ territories })
+      .eq('id', agencyId);
 
-    const { data: created, error } = await supabase
-      .from('territories')
-      .insert([insertPayload])
-      .select()
-      .single();
+    if (updateError) throw updateError;
 
-    if (error) throw error;
+    // Log audit event
+    await logAuditEvent(req, {
+      action: 'UPDATE_TERRITORY',
+      resourceId: territoryId,
+      metadata: { priority, is_active }
+    });
 
-    return res.status(201).json({ success: true, data: created });
+    res.status(200).json({
+      success: true,
+      message: 'Territory updated successfully',
+      data: territories[territoryIndex]
+    });
+
   } catch (error) {
-    console.error('Error in addTerritory:', error);
-    res.status(500).json({ success: false, message: 'Internal server error' });
+    console.error('Error in updateTerritory:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to update territory',
+      error: process.env.NODE_ENV === 'development' ? error.message : 'Something went wrong'
+    });
   }
 };
 
 /**
  * DELETE /api/mobile/territories/:id
- * Remove a territory by ID or zipcode (Flutter API contract)
- * Supports both :id (UUID) and :zipcode (string) parameters
+ * Remove/deactivate a territory
  */
 exports.removeTerritory = async (req, res) => {
   try {
     const agencyId = req.agency.id;
-    const { id, zipcode } = req.params;
-    const territoryId = id || zipcode; // Support both :id and :zipcode
+    const territoryId = req.params.id;
 
-    if (!territoryId) {
-      return res.status(400).json({ success: false, message: 'Territory ID or zipcode is required' });
+    // Fetch current agency data
+    const { data: agency, error: fetchError } = await supabase
+      .from('agencies')
+      .select('id, territories')
+      .eq('id', agencyId)
+      .single();
+
+    if (fetchError) throw fetchError;
+
+    let territories = agency.territories || [];
+    const territoryIndex = territories.findIndex(t => t.id === territoryId);
+
+    if (territoryIndex === -1) {
+      return res.status(404).json({
+        success: false,
+        message: 'Territory not found'
+      });
     }
 
-    // Check if territoryId is a UUID (contains dashes) or zipcode
-    const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(territoryId);
-    
-    let query = supabase
-      .from('territories')
-      .select('id')
-      .eq('agency_id', agencyId)
-      .eq('is_active', true);
-    
-    if (isUUID) {
-      query = query.eq('id', territoryId);
-    } else {
-      query = query.or(`value.eq.${territoryId},zipcode.eq.${territoryId}`);
-    }
+    // Soft delete: mark as inactive and add deleted_at
+    territories[territoryIndex].is_active = false;
+    territories[territoryIndex].deleted_at = new Date().toISOString();
 
-    const { data: existing } = await query
-      .limit(1)
-      .maybeSingle();
+    // Update agency
+    const { error: updateError } = await supabase
+      .from('agencies')
+      .update({ territories })
+      .eq('id', agencyId);
 
-    if (!existing) {
-      return res.status(404).json({ success: false, message: 'Territory not found' });
-    }
+    if (updateError) throw updateError;
 
-    const { error } = await supabase
-      .from('territories')
-      .update({ is_active: false, updated_at: new Date().toISOString() })
-      .eq('id', existing.id);
+    // Log audit event
+    await logAuditEvent(req, {
+      action: 'REMOVE_TERRITORY',
+      resourceId: territoryId,
+      metadata: { 
+        type: territories[territoryIndex].type,
+        value: territories[territoryIndex].value
+      }
+    });
+
+    res.status(200).json({
+      success: true,
+      message: 'Territory removed successfully'
+    });
+
+  } catch (error) {
+    console.error('Error in removeTerritory:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to remove territory',
+      error: process.env.NODE_ENV === 'development' ? error.message : 'Something went wrong'
+    });
+  }
+};
+
+/**
+ * GET /api/mobile/territories/available
+ * Get territories available for claiming
+ * NOTE: With new structure, "available" means not in any agency's territories
+ */
+exports.getAvailableTerritories = async (req, res) => {
+  try {
+    const {
+      state,
+      type = 'zipcode',
+      search,
+      page = 1,
+      limit = 50
+    } = req.query;
+
+    const currentPage = Math.max(Number.parseInt(page, 10) || 1, 1);
+    const pageSize = Math.min(Math.max(Number.parseInt(limit, 10) || 50, 1), 200);
+    const offset = (currentPage - 1) * pageSize;
+
+    // Fetch all agencies with territories to find what's claimed
+    const { data: agencies, error } = await supabase
+      .from('agencies')
+      .select('territories');
 
     if (error) throw error;
 
-    return res.status(200).json({ success: true });
+    // Extract all claimed territories
+    const claimedTerritories = new Set();
+    (agencies || []).forEach(agency => {
+      const territories = agency.territories || [];
+      territories.forEach(t => {
+        if (t.is_active && !t.deleted_at) {
+          claimedTerritories.add(`${t.type}:${t.value}`);
+        }
+      });
+    });
+
+    // Generate sample available territories (in production, this would query a master territories table)
+    const sampleTerritories = generateSampleTerritories(type, state, search);
+    
+    // Filter out claimed ones
+    const available = sampleTerritories.filter(t => 
+      !claimedTerritories.has(`${t.type}:${t.value}`)
+    );
+
+    // Paginate
+    const paged = available.slice(offset, offset + pageSize);
+    const totalPages = Math.ceil(available.length / pageSize);
+
+    res.status(200).json({
+      success: true,
+      data: {
+        territories: paged,
+        totalCount: available.length,
+        page: currentPage,
+        limit: pageSize,
+        totalPages
+      }
+    });
+
   } catch (error) {
-    console.error('Error in removeTerritory:', error);
-    res.status(500).json({ success: false, message: 'Internal server error' });
+    console.error('Error in getAvailableTerritories:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch available territories',
+      error: process.env.NODE_ENV === 'development' ? error.message : 'Something went wrong'
+    });
   }
 };
 
@@ -347,328 +449,132 @@ exports.removeTerritory = async (req, res) => {
 exports.requestTerritoryAddition = async (req, res) => {
   try {
     const agencyId = req.agency.id;
-    const { territories, notes } = req.body;
+    const { type, value, reason } = req.body;
 
-    const { data: subscription, error: subscriptionError } = await supabase
-      .from('subscriptions')
-      .select('id, status, plan_id, billing_cycle, current_units, metadata')
-      .eq('agency_id', agencyId)
-      .in('status', ['trial', 'active'])
-      .order('created_at', { ascending: false })
-      .limit(1)
-      .maybeSingle();
-
-    if (subscriptionError) throw subscriptionError;
-    if (!subscription) {
+    if (!type || !value) {
       return res.status(400).json({
         success: false,
-        message: 'No active subscription found. Please subscribe to a plan first.'
+        message: 'Territory type and value are required'
       });
     }
 
-    const planResponse = await supabase
-      .from('subscription_plans')
-      .select('id, plan_name, unit_type, max_units')
-      .eq('id', subscription.plan_id)
-      .maybeSingle();
+    // Log the request in notifications or a requests table
+    const { error } = await supabase
+      .from('notifications')
+      .insert([{
+        agency_id: agencyId,
+        type: 'TERRITORY_REQUEST',
+        title: 'Territory Addition Request',
+        message: `Request to add ${type}: ${value}`,
+        data: { type, value, reason },
+        is_read: false,
+        created_at: new Date().toISOString()
+      }]);
 
-    if (planResponse.error) throw planResponse.error;
-    const plan = planResponse.data;
+    if (error) throw error;
 
-    if (!plan) {
-      return res.status(400).json({
-        success: false,
-        message: 'Subscription plan could not be resolved'
-      });
-    }
-
-    const activeCountResp = await supabase
-      .from('territories')
-      .select('id', { count: 'exact', head: true })
-      .eq('agency_id', agencyId)
-      .eq('is_active', true)
-      .is('deleted_at', null);
-
-    if (activeCountResp.error) throw activeCountResp.error;
-
-    const currentTerritoryCount = activeCountResp.count || 0;
-    const maxUnits = plan.max_units ?? toNumber(subscription.metadata?.max_units, null);
-
-    if (typeof maxUnits === 'number' && currentTerritoryCount + territories.length > maxUnits) {
-      return res.status(400).json({
-        success: false,
-        message: `Adding ${territories.length} territories would exceed your limit of ${maxUnits}. Current: ${currentTerritoryCount}`
-      });
-    }
-
-    const invalidTypes = territories.filter((territory) => territory.type !== plan.unit_type);
-    if (invalidTypes.length > 0) {
-      return res.status(400).json({
-        success: false,
-        message: `Territory types must match your subscription plan (${plan.unit_type})`
-      });
-    }
-
-    const values = territories.map((territory) => String(territory.value).trim());
-    const duplicates = values.filter((value, index) => values.indexOf(value) !== index);
-    if (duplicates.length > 0) {
-      return res.status(400).json({
-        success: false,
-        message: `Duplicate territories in request: ${duplicates.join(', ')}`
-      });
-    }
-
-    const existingResp = await supabase
-      .from('territories')
-      .select('value')
-      .in('value', values)
-      .eq('type', plan.unit_type)
-      .eq('is_active', true);
-
-    if (existingResp.error) throw existingResp.error;
-
-    if ((existingResp.data || []).length > 0) {
-      return res.status(400).json({
-        success: false,
-        message: `Some territories are already claimed: ${(existingResp.data || []).map((item) => item.value).join(', ')}`
-      });
-    }
-
-    const now = new Date().toISOString();
-    const insertPayload = territories.map((territory) => ({
-      agency_id: agencyId,
-      subscription_id: subscription.id,
-      type: territory.type,
-      value: String(territory.value),
-      state: territory.state || null,
-      city: territory.city || null,
-      county: territory.county || null,
-      zipcode: territory.zipcode ? String(territory.zipcode) : null,
-      priority: territory.priority ?? 5,
-      is_active: false,
-      metadata: {
-        requestedBy: 'mobile_app',
-        requestNotes: notes || null,
-        requestedAt: now
-      },
-      created_at: now,
-      updated_at: now
-    }));
-
-    const insertResp = await supabase
-      .from('territories')
-      .insert(insertPayload)
-      .select('*');
-
-    if (insertResp.error) throw insertResp.error;
-
-    const createdTerritories = insertResp.data || [];
-
+    // Log audit event
     await logAuditEvent(req, {
-      action: 'TERRITORY_REQUEST',
-      resourceId: createdTerritories[0]?.id || 'bulk',
-      metadata: {
-        territories: values,
-        notes: notes || null,
-        subscriptionId: subscription.id
-      }
+      action: 'REQUEST_TERRITORY',
+      resourceId: null,
+      metadata: { type, value, reason }
     });
 
-    res.status(201).json({
+    res.status(200).json({
       success: true,
-      message: 'Territory request submitted successfully',
-      data: {
-        requestId: `req_${Date.now()}`,
-        territories: createdTerritories.map((territory) => ({
-          id: territory.id,
-          type: territory.type,
-          value: territory.value,
-          state: territory.state,
-          city: territory.city,
-          status: 'pending_approval'
-        })),
-        subscription: {
-          id: subscription.id,
-          currentUnits: currentTerritoryCount,
-          maxUnits: maxUnits ?? null,
-          remainingUnits: typeof maxUnits === 'number'
-            ? Math.max(maxUnits - currentTerritoryCount - territories.length, 0)
-            : null
-        }
-      }
+      message: 'Territory request submitted. An admin will review it shortly.'
     });
 
   } catch (error) {
     console.error('Error in requestTerritoryAddition:', error);
     res.status(500).json({
       success: false,
-      message: 'Internal server error',
+      message: 'Failed to submit territory request',
       error: process.env.NODE_ENV === 'development' ? error.message : 'Something went wrong'
     });
   }
 };
 
-/**
- * PUT /api/mobile/territories/:territoryId
- * Update territory priority or status (if allowed)
- */
-exports.updateTerritory = async (req, res) => {
+// =====================================================
+// HELPER FUNCTIONS
+// =====================================================
+
+async function logAuditEvent(req, { action, resourceId, metadata }) {
   try {
-    const agencyId = req.agency.id;
-    const { territoryId } = req.params;
-    const { priority, isActive, notes } = req.body;
-
-    const territoryResp = await supabase
-      .from('territories')
-      .select('*')
-      .eq('id', territoryId)
-      .eq('agency_id', agencyId)
-      .maybeSingle();
-
-    if (territoryResp.error) throw territoryResp.error;
-
-    if (!territoryResp.data) {
-      return res.status(404).json({
-        success: false,
-        message: 'Territory not found or does not belong to your agency'
-      });
-    }
-
-    const territory = territoryResp.data;
-
-    const updateData = {
-      updated_at: new Date().toISOString()
-    };
-
-    if (priority !== undefined) updateData.priority = priority;
-    if (isActive !== undefined) updateData.is_active = Boolean(isActive);
-    if (notes) {
-      updateData.metadata = {
-        ...(territory.metadata || {}),
-        notes
-      };
-    }
-
-    const updateResp = await supabase
-      .from('territories')
-      .update(updateData)
-      .eq('id', territoryId)
-      .select('*')
-      .maybeSingle();
-
-    if (updateResp.error) throw updateResp.error;
-
-    const updatedTerritory = updateResp.data;
-
-    await logAuditEvent(req, {
-      action: 'TERRITORY_UPDATE',
-      resourceId: territoryId,
+    await supabase.from('audit_logs').insert([{
+      actor_id: req.agency?.id || 'unknown-agency',
+      actor_email: req.agency?.email || null,
+      action,
+      resource_type: 'TERRITORY',
+      resource_id: resourceId,
       metadata: {
-        changes: updateData,
-        previousValues: {
-          priority: territory.priority,
-          is_active: territory.is_active
+        ...(metadata || {}),
+        ip: req.ip,
+        userAgent: req.get('User-Agent') || null
+      },
+      created_at: new Date().toISOString()
+    }]);
+  } catch (auditError) {
+    console.warn('Failed to write audit log:', auditError.message);
+  }
+}
+
+function generateSampleTerritories(type, state, search) {
+  // In production, this should query a master territories database
+  // For now, generate samples based on Texas zipcodes
+  const samples = [];
+  
+  if (type === 'zipcode') {
+    const texasZipcodes = [
+      { zipcode: '75201', city: 'Dallas', state: 'TX' },
+      { zipcode: '75202', city: 'Dallas', state: 'TX' },
+      { zipcode: '75203', city: 'Dallas', state: 'TX' },
+      { zipcode: '77001', city: 'Houston', state: 'TX' },
+      { zipcode: '77002', city: 'Houston', state: 'TX' },
+      { zipcode: '78701', city: 'Austin', state: 'TX' },
+      { zipcode: '78702', city: 'Austin', state: 'TX' },
+      { zipcode: '78703', city: 'Austin', state: 'TX' },
+      { zipcode: '78704', city: 'Austin', state: 'TX' },
+      { zipcode: '78705', city: 'Austin', state: 'TX' }
+    ];
+
+    texasZipcodes.forEach(z => {
+      if (!state || z.state === state) {
+        if (!search || z.zipcode.includes(search) || z.city.toLowerCase().includes(search.toLowerCase())) {
+          samples.push({
+            id: `sample-${z.zipcode}`,
+            type: 'zipcode',
+            value: z.zipcode,
+            zipcode: z.zipcode,
+            city: z.city,
+            state: z.state,
+            county: null,
+            is_active: false,
+            priority: 0
+          });
         }
       }
     });
-
-    res.status(200).json({
-      success: true,
-      message: 'Territory updated successfully',
-      data: {
-        territory: mapTerritoryRecord(updatedTerritory)
+  } else if (type === 'city') {
+    const cities = ['Dallas', 'Houston', 'Austin', 'San Antonio', 'Fort Worth'];
+    cities.forEach(city => {
+      if (!search || city.toLowerCase().includes(search.toLowerCase())) {
+        samples.push({
+          id: `sample-city-${city}`,
+          type: 'city',
+          value: city,
+          city,
+          state: 'TX',
+          county: null,
+          zipcode: null,
+          is_active: false,
+          priority: 0
+        });
       }
-    });
-
-  } catch (error) {
-    console.error('Error in updateTerritory:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Internal server error',
-      error: process.env.NODE_ENV === 'development' ? error.message : 'Something went wrong'
     });
   }
-};
 
-/**
- * DELETE /api/mobile/territories/:territoryId
- * Request territory removal (requires admin approval)
- */
-exports.requestTerritoryRemoval = async (req, res) => {
-  try {
-    const agencyId = req.agency.id;
-    const { territoryId } = req.params;
-    const { reason } = req.body;
+  return samples;
+}
 
-    const territoryResp = await supabase
-      .from('territories')
-      .select('*')
-      .eq('id', territoryId)
-      .eq('agency_id', agencyId)
-      .maybeSingle();
-
-    if (territoryResp.error) throw territoryResp.error;
-
-    if (!territoryResp.data) {
-      return res.status(404).json({
-        success: false,
-        message: 'Territory not found or does not belong to your agency'
-      });
-    }
-
-    const territory = territoryResp.data;
-
-    const updatedMetadata = {
-      ...(territory.metadata || {}),
-      removalRequested: true,
-      removalReason: reason || null,
-      removalRequestedAt: new Date().toISOString()
-    };
-
-    const updateResp = await supabase
-      .from('territories')
-      .update({
-        is_active: false,
-        metadata: updatedMetadata,
-        updated_at: new Date().toISOString()
-      })
-      .eq('id', territoryId)
-      .select('*')
-      .maybeSingle();
-
-    if (updateResp.error) throw updateResp.error;
-
-    await logAuditEvent(req, {
-      action: 'TERRITORY_REMOVAL_REQUEST',
-      resourceId: territoryId,
-      metadata: {
-        reason: reason || null,
-        type: territory.type,
-        value: territory.value,
-        state: territory.state
-      }
-    });
-
-    res.status(200).json({
-      success: true,
-      message: 'Territory removal request submitted successfully',
-      data: {
-        territory: {
-          id: territory.id,
-          type: territory.type,
-          value: territory.value,
-          state: territory.state,
-          status: 'removal_requested'
-        }
-      }
-    });
-
-  } catch (error) {
-    console.error('Error in requestTerritoryRemoval:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Internal server error',
-      error: process.env.NODE_ENV === 'development' ? error.message : 'Something went wrong'
-    });
-  }
-};
+module.exports = exports;

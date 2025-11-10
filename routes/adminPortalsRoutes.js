@@ -50,6 +50,13 @@ const fetchLeadCountFromAPI = async (apiEndpoint, authType, authCredentials) => 
   }
 };
 
+// Helper function to get base URL for webhook generation
+function getBaseUrl() {
+  return process.env.BASE_API_URL || 
+         process.env.BASE_URL || 
+         (process.env.PORT ? `http://localhost:${process.env.PORT}` : `http://localhost:${process.env.PORT || 3000}`);
+}
+
 // Apply admin authentication to all routes
 router.use(authenticateAdmin);
 
@@ -99,22 +106,32 @@ router.get('/portals', async (req, res) => {
 
     if (error) throw error;
 
+    // Generate webhook URL dynamically using BASE_API_URL
+    const baseUrl = getBaseUrl();
+
     // Format response to match frontend expectations
-    const formattedPortals = (data || []).map(portal => ({
-      id: portal.id,
-      portal_name: portal.portal_name,
-      portal_code: portal.portal_code,
-      portal_type: portal.portal_type,
-      industry: portal.industry,
-      portal_status: portal.portal_status || portal.status || 'active', // Keep portal_status for frontend
-      status: portal.portal_status || portal.status || 'active', // Also include status for compatibility
-      api_endpoint: portal.api_endpoint,
-      api_key: portal.api_key,
-      total_leads: portal.total_leads || 0,
-      health_status: portal.health_status || 'unknown',
-      last_activity: portal.last_activity || portal.updated_at || portal.created_at,
-      created_at: portal.created_at
-    }));
+    const formattedPortals = (data || []).map(portal => {
+      // Dynamically generate webhook URL using current BASE_API_URL
+      const webhookUrl = portal.portal_code ? `${baseUrl}/api/webhooks/${portal.portal_code}` : null;
+      
+      return {
+        id: portal.id,
+        portal_name: portal.portal_name,
+        portal_code: portal.portal_code,
+        portal_type: portal.portal_type,
+        industry: portal.industry,
+        portal_status: portal.portal_status || portal.status || 'active', // Keep portal_status for frontend
+        status: portal.portal_status || portal.status || 'active', // Also include status for compatibility
+        api_endpoint: portal.api_endpoint,
+        api_key: portal.api_key,
+        webhook_endpoint: webhookUrl, // Dynamically generated webhook URL
+        generated_webhook_url: webhookUrl, // Also include for compatibility
+        total_leads: portal.total_leads || 0,
+        health_status: portal.health_status || 'unknown',
+        last_activity: portal.last_activity || portal.updated_at || portal.created_at,
+        created_at: portal.created_at
+      };
+    });
 
     res.json({
       success: true,
@@ -169,10 +186,21 @@ router.get('/portals/:id', async (req, res) => {
     });
     console.log('📦 BACKEND: Full portal data keys:', Object.keys(data));
 
+    // Generate webhook URL dynamically using BASE_API_URL
+    const baseUrl = getBaseUrl();
+    const webhookUrl = data.portal_code ? `${baseUrl}/api/webhooks/${data.portal_code}` : null;
+
+    // Add dynamically generated webhook URL to response
+    const portalResponse = {
+      ...data,
+      webhook_endpoint: webhookUrl, // Dynamically generated webhook URL
+      generated_webhook_url: webhookUrl // Also include for compatibility
+    };
+
     res.json({
       success: true,
       data: {
-        portal: data
+        portal: portalResponse
       }
     });
   } catch (error) {
@@ -285,9 +313,10 @@ router.post('/portals', async (req, res) => {
     console.log('🔍 finalPortalName:', finalPortalName);
     console.log('🔍 finalPortalCode:', finalPortalCode);
 
-    // Generate webhook URL - use BASE_API_URL for more specific configuration
-    const baseUrl = process.env.BASE_API_URL || process.env.BASE_URL || process.env.FRONTEND_URL || `http://localhost:${process.env.PORT || 3000}`;
+    // Generate webhook URL - use BASE_API_URL (backend API URL)
+    const baseUrl = getBaseUrl();
     const generated_webhook_url = `${baseUrl}/api/webhooks/${finalPortalCode}`;
+    console.log(`🔗 Generated webhook URL: ${generated_webhook_url} (using baseUrl: ${baseUrl})`);
 
     // Fetch initial lead count
     let total_leads = 0;
@@ -376,14 +405,17 @@ router.post('/portals', async (req, res) => {
       }
     }
 
+    // Generate webhook URL dynamically using BASE_API_URL (always use current BASE_API_URL for response)
+    // Reuse the baseUrl from above (already declared in this function scope at line 317)
+    const responseWebhookUrl = data.portal_code ? `${baseUrl}/api/webhooks/${data.portal_code}` : null;
+    
     // Add api_key and webhook_endpoint to portal data for frontend
-    // Use generated_webhook_url from database if available, otherwise use the one we generated
-    const webhookUrl = data.generated_webhook_url || generated_webhook_url;
+    // Always use dynamically generated webhook URL based on current BASE_API_URL
     const portalResponse = {
       ...data,
       api_key: api_key,
-      webhook_endpoint: webhookUrl, // Frontend expects this property name
-      generated_webhook_url: webhookUrl // Keep original property for compatibility
+      webhook_endpoint: responseWebhookUrl, // Dynamically generated webhook URL
+      generated_webhook_url: responseWebhookUrl // Keep original property for compatibility
     };
 
     res.status(201).json({
@@ -559,7 +591,7 @@ router.delete('/portals/:id', async (req, res) => {
     // Check if portal exists
     const { data: portal, error: checkError } = await supabase
       .from('portals')
-      .select('id')
+      .select('id, portal_name')
       .eq('id', id)
       .maybeSingle();
 
@@ -572,24 +604,67 @@ router.delete('/portals/:id', async (req, res) => {
       });
     }
 
-    // Delete portal
+    console.log(`🗑️  Deleting portal: ${portal.portal_name} (${id})`);
+
+    // Step 1: Delete or update related records in temp_leads
+    // Option 1: Delete related temp_leads records
+    const { error: tempLeadsError } = await supabase
+      .from('temp_leads')
+      .delete()
+      .eq('portal_id', id);
+
+    if (tempLeadsError) {
+      console.warn('⚠️  Error deleting temp_leads (may not exist):', tempLeadsError.message);
+      // Continue with portal deletion even if temp_leads deletion fails
+    } else {
+      console.log('✅ Deleted related temp_leads records');
+    }
+
+    // Step 2: Delete related records in leads table (if portal_id exists)
+    const { error: leadsError } = await supabase
+      .from('leads')
+      .delete()
+      .eq('portal_id', id);
+
+    if (leadsError) {
+      console.warn('⚠️  Error deleting leads (may not exist or have different FK):', leadsError.message);
+      // Continue with portal deletion
+    } else {
+      console.log('✅ Deleted related leads records');
+    }
+
+    // Step 3: Delete portal
     const { error } = await supabase
       .from('portals')
       .delete()
       .eq('id', id);
 
-    if (error) throw error;
+    if (error) {
+      // Check if it's a foreign key constraint error
+      if (error.code === '23503' || error.message.includes('foreign key')) {
+        console.error('❌ Foreign key constraint error:', error.message);
+        return res.status(400).json({
+          success: false,
+          message: 'Cannot delete portal: It has related records that must be deleted first',
+          error: error.message,
+          hint: 'Please delete related leads, temp_leads, or other dependent records first'
+        });
+      }
+      throw error;
+    }
 
+    console.log('✅ Portal deleted successfully');
     res.json({
       success: true,
       message: 'Portal deleted successfully'
     });
   } catch (error) {
-    console.error('Error deleting portal:', error);
+    console.error('❌ Error deleting portal:', error);
     res.status(500).json({
       success: false,
       message: 'Failed to delete portal',
-      error: error.message
+      error: error.message,
+      code: error.code
     });
   }
 });

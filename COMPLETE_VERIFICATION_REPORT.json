@@ -1,0 +1,769 @@
+{
+  "database": {
+    "agencies": {
+      "status": "OK",
+      "columns": 23,
+      "columnList": [
+        "legacy_agency_id",
+        "agency_name",
+        "email",
+        "status",
+        "industry",
+        "zipcodes",
+        "verification_status",
+        "total_spent",
+        "conversion_rate",
+        "created_at",
+        "updated_at",
+        "id",
+        "business_name",
+        "password_hash",
+        "territories",
+        "territory_count",
+        "territory_limit",
+        "preferred_territory_type",
+        "primary_zipcodes",
+        "primary_cities",
+        "primary_counties",
+        "primary_states",
+        "territories_updated_at"
+      ]
+    },
+    "users": {
+      "status": "OK",
+      "columns": 10,
+      "columnList": [
+        "id",
+        "agency_id",
+        "email",
+        "password_hash",
+        "full_name",
+        "role",
+        "is_active",
+        "metadata",
+        "created_at",
+        "updated_at"
+      ]
+    },
+    "subscriptions": {
+      "status": "OK",
+      "columns": 24,
+      "columnList": [
+        "id",
+        "agency_id",
+        "plan_id",
+        "custom_price",
+        "units_purchased",
+        "trial_start",
+        "trial_end",
+        "current_period_start",
+        "current_period_end",
+        "auto_renew",
+        "status",
+        "stripe_subscription_id",
+        "metadata",
+        "created_at",
+        "updated_at",
+        "start_date",
+        "end_date",
+        "trial_end_date",
+        "next_billing_date",
+        "last_billing_date",
+        "current_units",
+        "max_units",
+        "custom_price_per_unit",
+        "billing_cycle"
+      ]
+    },
+    "subscription_plans": {
+      "status": "OK",
+      "columns": 10,
+      "columnList": [
+        "id",
+        "plan_name",
+        "base_price",
+        "base_zipcodes_included",
+        "additional_price",
+        "max_cities_allowed",
+        "custom_pricing",
+        "is_active",
+        "created_at",
+        "updated_at"
+      ]
+    },
+    "territories": {
+      "status": "OK",
+      "columns": 15,
+      "columnList": [
+        "id",
+        "subscription_id",
+        "agency_id",
+        "type",
+        "value",
+        "state",
+        "is_active",
+        "metadata",
+        "created_at",
+        "updated_at",
+        "priority",
+        "active_subscription_id",
+        "zipcode",
+        "city",
+        "county"
+      ]
+    },
+    "leads": {
+      "status": "OK",
+      "columns": 23,
+      "columnList": [
+        "id",
+        "portal_id",
+        "lead_name",
+        "email",
+        "phone_number",
+        "property_type",
+        "budget_range",
+        "preferred_location",
+        "timeline",
+        "needs",
+        "additional_details",
+        "source",
+        "status",
+        "created_at",
+        "raw_payload",
+        "lead_id",
+        "first_name",
+        "last_name",
+        "phone",
+        "address",
+        "city",
+        "state",
+        "zipcode"
+      ]
+    },
+    "lead_assignments": {
+      "status": "OK",
+      "columns": 0,
+      "columnList": []
+    },
+    "lead_purchases": {
+      "status": "OK",
+      "columns": 0,
+      "columnList": []
+    },
+    "portals": {
+      "status": "OK",
+      "columns": 37,
+      "columnList": [
+        "id",
+        "portal_name",
+        "portal_code",
+        "portal_slug",
+        "portal_type",
+        "industry",
+        "portal_description",
+        "base_url",
+        "webhook_url",
+        "api_endpoint",
+        "schema_endpoint",
+        "auth_type",
+        "auth_credentials",
+        "portal_status",
+        "health_status",
+        "auto_sync_enabled",
+        "sync_frequency",
+        "notification_level",
+        "auto_approve_threshold",
+        "discovered_schema",
+        "field_mappings",
+        "schema_version",
+        "last_schema_sync",
+        "total_leads",
+        "successful_submissions",
+        "failed_submissions",
+        "last_activity",
+        "realtime_delivery_enabled",
+        "delivery_method",
+        "push_notifications",
+        "delivery_timeout",
+        "api_key",
+        "api_key_created_at",
+        "created_at",
+        "updated_at",
+        "is_deleted",
+        "generated_webhook_url"
+      ]
+    },
+    "notifications": {
+      "status": "OK",
+      "columns": 0,
+      "columnList": []
+    }
+  },
+  "models": {
+    "Agency": {
+      "status": "OK",
+      "hasFieldMappings": true,
+      "hasTableName": true,
+      "hasTimestamps": true
+    },
+    "User": {
+      "status": "OK",
+      "hasFieldMappings": true,
+      "hasTableName": true,
+      "hasTimestamps": true
+    },
+    "Subscription": {
+      "status": "OK",
+      "hasFieldMappings": true,
+      "hasTableName": true,
+      "hasTimestamps": true
+    },
+    "SubscriptionPlan": {
+      "status": "OK",
+      "hasFieldMappings": true,
+      "hasTableName": true,
+      "hasTimestamps": true
+    },
+    "Territory": {
+      "status": "OK",
+      "hasFieldMappings": true,
+      "hasTableName": true,
+      "hasTimestamps": true
+    },
+    "Lead": {
+      "status": "OK",
+      "hasFieldMappings": true,
+      "hasTableName": true,
+      "hasTimestamps": true
+    },
+    "LeadAssignment": {
+      "status": "OK",
+      "hasFieldMappings": true,
+      "hasTableName": true,
+      "hasTimestamps": true
+    },
+    "LeadPurchase": {
+      "status": "OK",
+      "hasFieldMappings": true,
+      "hasTableName": true,
+      "hasTimestamps": true
+    },
+    "Portal": {
+      "status": "OK",
+      "hasFieldMappings": true,
+      "hasTableName": true,
+      "hasTimestamps": true
+    },
+    "Notification": {
+      "status": "OK",
+      "hasFieldMappings": true,
+      "hasTableName": true,
+      "hasTimestamps": true
+    }
+  },
+  "controllers": {
+    "activeSubscriptionsController.js": {
+      "status": "OK",
+      "usesSequelize": false,
+      "hasErrorHandling": true,
+      "usesAsync": true,
+      "issues": []
+    },
+    "adminLeadsController.js": {
+      "status": "OK",
+      "usesSequelize": false,
+      "hasErrorHandling": true,
+      "usesAsync": true,
+      "issues": []
+    },
+    "agencyController.js": {
+      "status": "OK",
+      "usesSequelize": true,
+      "hasErrorHandling": true,
+      "usesAsync": true,
+      "issues": []
+    },
+    "billingPaymentsController.js": {
+      "status": "OK",
+      "usesSequelize": true,
+      "hasErrorHandling": true,
+      "usesAsync": true,
+      "issues": []
+    },
+    "documentVerificationController.js": {
+      "status": "OK",
+      "usesSequelize": false,
+      "hasErrorHandling": true,
+      "usesAsync": true,
+      "issues": []
+    },
+    "leadDistributionController.js": {
+      "status": "OK",
+      "usesSequelize": false,
+      "hasErrorHandling": true,
+      "usesAsync": true,
+      "issues": []
+    },
+    "mobileAnalyticsController.js": {
+      "status": "OK",
+      "usesSequelize": false,
+      "hasErrorHandling": true,
+      "usesAsync": true,
+      "issues": []
+    },
+    "mobileDeviceController.js": {
+      "status": "OK",
+      "usesSequelize": false,
+      "hasErrorHandling": true,
+      "usesAsync": true,
+      "issues": []
+    },
+    "mobileLeadsController.js": {
+      "status": "OK",
+      "usesSequelize": false,
+      "hasErrorHandling": true,
+      "usesAsync": true,
+      "issues": []
+    },
+    "mobileMessagingController.js": {
+      "status": "OK",
+      "usesSequelize": true,
+      "hasErrorHandling": true,
+      "usesAsync": true,
+      "issues": []
+    },
+    "mobileNotificationController.js": {
+      "status": "OK",
+      "usesSequelize": false,
+      "hasErrorHandling": true,
+      "usesAsync": true,
+      "issues": []
+    },
+    "mobileSubscriptionController.js": {
+      "status": "OK",
+      "usesSequelize": false,
+      "hasErrorHandling": true,
+      "usesAsync": true,
+      "issues": []
+    },
+    "mobileTerritoryController.js": {
+      "status": "OK",
+      "usesSequelize": false,
+      "hasErrorHandling": true,
+      "usesAsync": true,
+      "issues": []
+    },
+    "mobileTerritoryController_backup.js": {
+      "status": "OK",
+      "usesSequelize": false,
+      "hasErrorHandling": true,
+      "usesAsync": true,
+      "issues": []
+    },
+    "subscriptionPlansController.js": {
+      "status": "OK",
+      "usesSequelize": true,
+      "hasErrorHandling": true,
+      "usesAsync": true,
+      "issues": []
+    },
+    "subscriptionsController.js": {
+      "status": "OK",
+      "usesSequelize": true,
+      "hasErrorHandling": true,
+      "usesAsync": true,
+      "issues": []
+    },
+    "territoriesController.js": {
+      "status": "OK",
+      "usesSequelize": true,
+      "hasErrorHandling": true,
+      "usesAsync": true,
+      "issues": []
+    }
+  },
+  "routes": {
+    "adminAgenciesRoutes.js": {
+      "status": "OK",
+      "routeCount": 8,
+      "routes": [
+        "GET /agencies",
+        "GET /agencies/:agencyId",
+        "POST /agencies",
+        "PUT /agencies/:agencyId",
+        "PATCH /agencies/:agencyId/status",
+        "PUT /agencies/:agencyId/status",
+        "GET /agencies/:agencyId/stats",
+        "DELETE /agencies/:agencyId"
+      ]
+    },
+    "adminAgencySubscriptionsRoutes.js": {
+      "status": "OK",
+      "routeCount": 6,
+      "routes": [
+        "GET /agency-subscriptions",
+        "GET /agency-subscriptions/:subscriptionId",
+        "POST /agency-subscriptions",
+        "PUT /agency-subscriptions/:subscriptionId",
+        "PUT /agency-subscriptions/:subscriptionId/status",
+        "DELETE /agency-subscriptions/:subscriptionId"
+      ]
+    },
+    "adminDocumentVerificationRoutes.js": {
+      "status": "OK",
+      "routeCount": 4,
+      "routes": [
+        "GET /verification-documents",
+        "GET /verification-documents/:id/download",
+        "PUT /verification-documents/:id/approve",
+        "PUT /verification-documents/:id/reject"
+      ]
+    },
+    "adminEnhancedSubscriptionsRoutes.js": {
+      "status": "OK",
+      "routeCount": 13,
+      "routes": [
+        "GET /subscriptions/plans",
+        "GET /subscriptions/plans/:id",
+        "POST /subscriptions/plans",
+        "PUT /subscriptions/plans/:id",
+        "DELETE /subscriptions/plans/bulk-delete",
+        "DELETE /subscriptions/plans/:id",
+        "POST /subscriptions/plans/:id/calculate",
+        "POST /subscriptions/assign",
+        "PUT /subscriptions/:id/territories",
+        "PUT /subscriptions/:id/trial",
+        "GET /subscriptions/territories",
+        "GET /subscriptions/:id/renewal",
+        "PUT /subscriptions/:id/auto-renew"
+      ]
+    },
+    "adminFinancialRoutes.js": {
+      "status": "OK",
+      "routeCount": 8,
+      "routes": [
+        "GET /financial/invoices",
+        "GET /financial/invoices/:id",
+        "POST /financial/invoices",
+        "GET /financial/payments",
+        "POST /financial/payments",
+        "POST /financial/refunds",
+        "GET /financial/reports",
+        "GET /financial/stats"
+      ]
+    },
+    "adminLeadsRoutes.js": {
+      "status": "OK",
+      "routeCount": 12,
+      "routes": [
+        "GET /leads",
+        "GET /leads/:leadId",
+        "PUT /leads/:leadId/reassign",
+        "GET /leads/stats",
+        "POST /leads/export",
+        "POST /leads/archive",
+        "GET /downloads/:filename",
+        "POST /leads/:leadId/distribute",
+        "POST /leads/batch-distribute",
+        "GET /leads/distribution/stats",
+        "GET /leads/:leadId/eligibility",
+        "PUT /leads/:leadId/reassign"
+      ]
+    },
+    "adminPortalsRoutes.js": {
+      "status": "OK",
+      "routeCount": 11,
+      "routes": [
+        "GET /portals",
+        "GET /portals/:id",
+        "POST /portals",
+        "PUT /portals/:id",
+        "DELETE /portals/:id",
+        "PUT /portals/:id/status",
+        "POST /portals/:id/regenerate-key",
+        "GET /portals/:id/stats",
+        "POST /portals/:id/schema",
+        "GET /portals/:id/mappings",
+        "POST /portals/sync-schemas"
+      ]
+    },
+    "adminRolesRoutes.js": {
+      "status": "OK",
+      "routeCount": 7,
+      "routes": [
+        "GET /roles",
+        "GET /roles/:id",
+        "POST /roles",
+        "PUT /roles/:id",
+        "DELETE /roles/:id",
+        "GET /roles/:id/users",
+        "POST /roles/check-permission"
+      ]
+    },
+    "adminRoutes.js": {
+      "status": "OK",
+      "routeCount": 15,
+      "routes": [
+        "POST /auth/login",
+        "POST /auth/refresh",
+        "GET /users",
+        "GET /users/:id",
+        "PUT /users/:id/status",
+        "POST /users",
+        "GET /leads/stats",
+        "GET /leads",
+        "POST /leads",
+        "PUT /leads/:id/assign",
+        "GET /analytics",
+        "GET /territories",
+        "POST /territories",
+        "DELETE /territories/:id",
+        "GET /activity-logs"
+      ]
+    },
+    "adminSystemRoutes.js": {
+      "status": "OK",
+      "routeCount": 9,
+      "routes": [
+        "GET /audit-logs",
+        "GET /audit-logs/:userId",
+        "GET /system/settings",
+        "PUT /system/settings",
+        "GET /system/industries",
+        "POST /system/industries",
+        "PUT /system/industries/:id",
+        "DELETE /system/industries/:id",
+        "GET /system/stats"
+      ]
+    },
+    "adminUsersRoutes.js": {
+      "status": "OK",
+      "routeCount": 7,
+      "routes": [
+        "GET /users",
+        "GET /users/:id",
+        "POST /users",
+        "PUT /users/:id",
+        "PUT /users/:id/password",
+        "DELETE /users/:id",
+        "GET /users/stats"
+      ]
+    },
+    "adminWebhooksRoutes.js": {
+      "status": "OK",
+      "routeCount": 3,
+      "routes": [
+        "GET /webhooks/deliveries",
+        "GET /webhooks/stats",
+        "POST /webhooks/deliveries/:id/retry"
+      ]
+    },
+    "agencyRoutes.js": {
+      "status": "OK",
+      "routeCount": 9,
+      "routes": [
+        "GET /summary",
+        "GET /",
+        "GET /:id",
+        "POST /",
+        "PUT /:id",
+        "DELETE /:id",
+        "PUT /:id/status",
+        "POST /:id/reset-password",
+        "POST /export"
+      ]
+    },
+    "leadDistributionRoutes.js": {
+      "status": "OK",
+      "routeCount": 5,
+      "routes": [
+        "POST /distribution/:leadId",
+        "POST /distribution/batch",
+        "GET /distribution/stats",
+        "GET /distribution/:leadId/eligibility",
+        "PUT /distribution/:leadId/reassign"
+      ]
+    },
+    "metricsRoutes.js": {
+      "status": "OK",
+      "routeCount": 2,
+      "routes": [
+        "GET /metrics",
+        "GET /metrics/health"
+      ]
+    },
+    "mobileAuthRoutes.js": {
+      "status": "OK",
+      "routeCount": 7,
+      "routes": [
+        "POST /register",
+        "POST /login",
+        "POST /logout",
+        "POST /verify-email",
+        "POST /forgot-password",
+        "GET /profile",
+        "PUT /profile"
+      ]
+    },
+    "mobileRoutes.js": {
+      "status": "OK",
+      "routeCount": 57,
+      "routes": [
+        "GET /subscription/plans",
+        "POST /auth/register",
+        "POST /auth/login",
+        "POST /auth/verify-email",
+        "POST /auth/forgot-password",
+        "GET /subscription",
+        "GET /subscription/status",
+        "GET /billing/history",
+        "GET /billing/upcoming",
+        "POST /subscription/subscribe",
+        "PUT /subscription/upgrade",
+        "PUT /subscription/downgrade",
+        "POST /subscription/cancel",
+        "GET /subscription/invoices",
+        "PUT /payment-method",
+        "GET /territories",
+        "POST /territories",
+        "GET /territories/available",
+        "POST /territories/request",
+        "PUT /territories/:id",
+        "DELETE /territories/:id",
+        "GET /conversations",
+        "GET /conversations",
+        "GET /conversations/:conversationId/messages",
+        "GET /conversations/:conversationId/messages",
+        "POST /conversations/:conversationId/messages",
+        "POST /conversations/:conversationId/messages",
+        "POST /conversations",
+        "POST /conversations",
+        "PUT /conversations/:conversationId/status",
+        "PUT /conversations/:conversationId/status",
+        "GET /message-templates",
+        "GET /message-templates",
+        "POST /message-templates",
+        "POST /message-templates",
+        "PUT /message-templates/:templateId",
+        "PUT /message-templates/:templateId",
+        "DELETE /message-templates/:templateId",
+        "DELETE /message-templates/:templateId",
+        "POST /analytics/event",
+        "GET /analytics/performance",
+        "GET /leads",
+        "GET /leads/:id",
+        "PUT /leads/:id/accept",
+        "PUT /leads/:id/reject",
+        "PUT /leads/:id/status",
+        "PUT /leads/:id/view",
+        "POST /leads/:id/call",
+        "POST /leads/:id/notes",
+        "POST /auth/register-device",
+        "PUT /auth/update-device",
+        "DELETE /auth/unregister-device",
+        "GET /notifications/settings",
+        "PUT /notifications/settings",
+        "POST /auth/upload-document",
+        "GET /auth/verification-status",
+        "GET /auth/documents"
+      ]
+    },
+    "mobileSubscriptionPurchaseRoutes.js": {
+      "status": "OK",
+      "routeCount": 2,
+      "routes": [
+        "POST /subscription/purchase",
+        "POST /subscription/test-checkout"
+      ]
+    },
+    "subscriptionManagementRoutes.js": {
+      "status": "OK",
+      "routeCount": 3,
+      "routes": [
+        "GET /subscriptions/active",
+        "GET /billing/payments",
+        "GET /billing/payments/export"
+      ]
+    },
+    "subscriptionRoutes.js": {
+      "status": "OK",
+      "routeCount": 30,
+      "routes": [
+        "GET /subscription-plans",
+        "GET /subscription-plans/:planId",
+        "POST /subscription-plans",
+        "PUT /subscription-plans/:planId",
+        "DELETE /subscription-plans/:planId",
+        "GET /subscriptions",
+        "GET /subscriptions/:subscriptionId",
+        "POST /subscriptions",
+        "PUT /subscriptions/:subscriptionId",
+        "DELETE /subscriptions/:subscriptionId",
+        "GET /territories",
+        "GET /territories/conflicts",
+        "POST /subscriptions/:subscriptionId/territories",
+        "PUT /territories/:territoryId",
+        "DELETE /territories/:territoryId",
+        "POST /territories/:territoryId/restore",
+        "GET /billing-payments/summary",
+        "GET /billing-payments/history",
+        "GET /billing-payments/:id",
+        "POST /billing-payments/export",
+        "PUT /billing-payments/:id/status",
+        "POST /billing-payments/retry-failed",
+        "GET /active-subscriptions/summary",
+        "GET /active-subscriptions",
+        "GET /active-subscriptions/:id",
+        "POST /active-subscriptions",
+        "PUT /active-subscriptions/:id",
+        "DELETE /active-subscriptions/:id",
+        "POST /active-subscriptions/:id/renew",
+        "POST /active-subscriptions/export"
+      ]
+    },
+    "supabaseSubscriptionPlansRoutes.js": {
+      "status": "OK",
+      "routeCount": 4,
+      "routes": [
+        "GET /subscription-plans",
+        "POST /subscription-plans",
+        "PUT /subscription-plans/:id",
+        "DELETE /subscription-plans/:id"
+      ]
+    }
+  },
+  "middleware": {
+    "adminAuth.js": {
+      "status": "OK",
+      "exportsMiddleware": true,
+      "hasNextCall": true,
+      "hasErrorHandling": true
+    },
+    "agencyAuth.js": {
+      "status": "OK",
+      "exportsMiddleware": true,
+      "hasNextCall": true,
+      "hasErrorHandling": true
+    },
+    "errorHandler.js": {
+      "status": "OK",
+      "exportsMiddleware": true,
+      "hasNextCall": false,
+      "hasErrorHandling": true
+    },
+    "observability.js": {
+      "status": "OK",
+      "exportsMiddleware": true,
+      "hasNextCall": true,
+      "hasErrorHandling": true
+    },
+    "validation.js": {
+      "status": "OK",
+      "exportsMiddleware": true,
+      "hasNextCall": true,
+      "hasErrorHandling": false
+    }
+  },
+  "issues": []
+}
