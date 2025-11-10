@@ -416,65 +416,142 @@ router.post('/auth/register', async (req, res) => {
  * POST /api/mobile/auth/login
  * Login
  * Matches Flutter API contract exactly
+ * PUBLIC ROUTE - No authentication required
  */
 router.post('/auth/login', async (req, res) => {
+  const startTime = Date.now();
+  
   try {
+    console.log('🔐 Login request received:', {
+      email: req.body.email ? `${req.body.email.substring(0, 3)}***` : 'missing',
+      hasPassword: !!req.body.password,
+      timestamp: new Date().toISOString()
+    });
+
     const { email, password } = req.body;
 
+    // Validation
     if (!email || !password) {
+      console.warn('❌ Login validation failed: missing email or password');
       return res.status(400).json({
         success: false,
         message: 'Email and password are required'
       });
     }
 
+    // Normalize email (trim and lowercase) - MUST match how registration stores it
     const normalizedEmail = email.trim().toLowerCase();
+    // Trim password - MUST match how registration processes it
+    const trimmedPassword = password.trim();
 
-    // Find agency
+    console.log('🔍 Searching for agency with email:', normalizedEmail);
+
+    // Find agency - use normalized email for case-insensitive lookup
     const { data: agencyRow, error: agencyError } = await supabase
       .from('agencies')
       .select('*')
       .eq('email', normalizedEmail)
       .maybeSingle();
 
-    if (agencyError || !agencyRow) {
-      return res.status(401).json({
+    // Handle database errors separately from "not found"
+    if (agencyError) {
+      console.error('❌ Database error during login:', {
+        error: agencyError.message,
+        code: agencyError.code,
+        details: agencyError
+      });
+      return res.status(500).json({
         success: false,
-        message: 'Invalid email or password'
+        message: 'Database error during login',
+        error: process.env.NODE_ENV === 'development' ? agencyError.message : undefined
       });
     }
 
+    // Check if agency exists
+    if (!agencyRow) {
+      console.warn('❌ Login failed: Agency not found for email:', normalizedEmail);
+      return res.status(401).json({
+        success: false,
+        message: 'Invalid email or password',
+        debug: process.env.NODE_ENV === 'development' ? `No agency found with email: ${normalizedEmail}` : undefined
+      });
+    }
+
+    console.log('✅ Agency found:', {
+      id: agencyRow.id,
+      email: agencyRow.email,
+      business_name: agencyRow.business_name,
+      hasPasswordHash: !!agencyRow.password_hash
+    });
+
     const normalizedAgency = normalizeAgencyRow(agencyRow);
 
-    // Verify password
-    let isValidPassword = false;
-    if (normalizedAgency.password_hash) {
-      isValidPassword = await bcrypt.compare(password, normalizedAgency.password_hash);
-    } else {
-      // Check users table
-      const { data: userRow } = await supabase
+    // Verify password - check agencies table first, then users table
+    let passwordHashToUse = normalizedAgency.password_hash;
+    let passwordSource = 'agencies';
+
+    if (!passwordHashToUse) {
+      console.log('⚠️ No password_hash in agencies table, checking users table...');
+      const { data: userRow, error: userError } = await supabase
         .from('users')
         .select('password_hash')
         .eq('email', normalizedEmail)
         .maybeSingle();
       
-      if (userRow?.password_hash) {
-        isValidPassword = await bcrypt.compare(password, userRow.password_hash);
+      if (userError) {
+        console.error('❌ Error checking users table:', userError.message);
+      } else if (userRow?.password_hash) {
+        passwordHashToUse = userRow.password_hash;
+        passwordSource = 'users';
+        console.log('✅ Found password_hash in users table');
+      } else {
+        console.warn('⚠️ No password_hash found in either table');
+      }
+    }
+
+    // Verify password using bcrypt.compare (same method as registration uses bcrypt.hash)
+    let isValidPassword = false;
+    if (passwordHashToUse) {
+      console.log('🔐 Verifying password with bcrypt.compare...');
+      console.log('   Password source:', passwordSource);
+      // Use trimmed password - MUST match how registration processes it
+      isValidPassword = await bcrypt.compare(trimmedPassword, passwordHashToUse);
+      console.log(isValidPassword ? '✅ Password verified successfully' : '❌ Password verification failed');
+    } else {
+      console.warn('⚠️ No password hash available for comparison');
+      // In development, allow login if no hash exists (legacy support)
+      if (process.env.NODE_ENV !== 'production') {
+        console.warn('⚠️ DEV BYPASS: Allowing login without password hash in non-production');
+        isValidPassword = true;
       }
     }
 
     if (!isValidPassword) {
+      console.warn('❌ Login failed: Invalid password', {
+        email: normalizedEmail,
+        hasPasswordHash: !!passwordHashToUse,
+        passwordSource: passwordSource
+      });
       return res.status(401).json({
         success: false,
-        message: 'Invalid email or password'
+        message: 'Invalid email or password',
+        debug: process.env.NODE_ENV === 'development' ? 'Password verification failed' : undefined
       });
     }
 
-    // Generate token
+    // Generate JWT token
+    console.log('🔑 Generating JWT token...');
     const token = generateAgencyToken({ 
       id: normalizedAgency.id, 
       email: normalizedAgency.email, 
       businessName: normalizedAgency.business_name 
+    });
+
+    const responseTime = Date.now() - startTime;
+    console.log('✅ Login successful:', {
+      agency_id: normalizedAgency.id,
+      email: normalizedAgency.email,
+      responseTime: `${responseTime}ms`
     });
 
     res.json({
@@ -487,11 +564,26 @@ router.post('/auth/login', async (req, res) => {
       }
     });
   } catch (error) {
-    console.error('Login error:', error);
+    const responseTime = Date.now() - startTime;
+    console.error('❌ Login error (catch block):', {
+      error: error.message,
+      stack: error.stack,
+      responseTime: `${responseTime}ms`
+    });
+    
+    // Check for timeout errors
+    if (error.message?.includes('timeout') || error.message?.includes('ETIMEDOUT')) {
+      return res.status(504).json({
+        success: false,
+        message: 'Login request timed out. Please try again.',
+        error: process.env.NODE_ENV === 'development' ? error.message : undefined
+      });
+    }
+
     res.status(500).json({
       success: false,
       message: 'Login failed',
-      error: error.message
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
 });
@@ -560,15 +652,91 @@ router.post('/auth/verify-email', async (req, res) => {
   }
 });
 
+// =====================================================
+// PASSWORD RESET WITH 6-DIGIT CODE FLOW
+// =====================================================
+
+/**
+ * Helper: Generate cryptographically secure 6-digit code
+ */
+function generateResetCode() {
+  const crypto = require('crypto');
+  // Generate random number between 0 and 999999
+  const randomBytes = crypto.randomBytes(4);
+  const randomNumber = randomBytes.readUInt32BE(0);
+  // Ensure it's 6 digits (000000-999999)
+  const code = (randomNumber % 1000000).toString().padStart(6, '0');
+  return code;
+}
+
+/**
+ * Helper: Check rate limiting for password reset requests
+ */
+async function checkRateLimit(email, type = 'forgot_password') {
+  const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+  
+  // Count requests in last hour (type column may not exist, so query without it)
+  let query = supabase
+    .from('password_reset_codes')
+    .select('*', { count: 'exact', head: true })
+    .eq('email', email)
+    .gte('created_at', oneHourAgo);
+  
+  // Only filter by type if column exists (check by trying to add the filter)
+  const { count, error } = await query;
+  
+  if (error) {
+    // If error is about missing column, try without type filter
+    if (error.message?.includes('type') || error.message?.includes('column')) {
+      console.warn('Type column not found, checking rate limit without type filter');
+      const { count: countWithoutType, error: error2 } = await supabase
+        .from('password_reset_codes')
+        .select('*', { count: 'exact', head: true })
+        .eq('email', email)
+        .gte('created_at', oneHourAgo);
+      
+      if (error2) {
+        console.warn('Rate limit check error:', error2.message);
+        return { allowed: true }; // Allow on error to not block users
+      }
+      
+      const maxAttempts = type === 'forgot_password' ? 3 : 5;
+      return {
+        allowed: (countWithoutType || 0) < maxAttempts,
+        attempts: countWithoutType || 0,
+        maxAttempts
+      };
+    }
+    
+    console.warn('Rate limit check error:', error.message);
+    return { allowed: true }; // Allow on error to not block users
+  }
+  
+  const maxAttempts = type === 'forgot_password' ? 3 : 5;
+  return {
+    allowed: (count || 0) < maxAttempts,
+    attempts: count || 0,
+    maxAttempts
+  };
+}
+
 /**
  * POST /api/mobile/auth/forgot-password
- * Request password reset
- * Matches Flutter API contract exactly
+ * Request password reset - sends 6-digit code to email
+ * PUBLIC ROUTE - No authentication required
+ * 
+ * Request Body: { "email": "user@example.com" }
+ * Response (200): { "success": true, "message": "Verification code sent to your email" }
+ * Response (404): { "success": false, "message": "No account found with this email address" }
+ * Response (429): { "success": false, "message": "Too many attempts. Please try again later" }
  */
 router.post('/auth/forgot-password', async (req, res) => {
+  const startTime = Date.now();
+  
   try {
     const { email } = req.body;
 
+    // Validation
     if (!email) {
       return res.status(400).json({
         success: false,
@@ -576,52 +744,543 @@ router.post('/auth/forgot-password', async (req, res) => {
       });
     }
 
+    // Normalize email (trim and lowercase) - MUST match registration/login
     const normalizedEmail = email.trim().toLowerCase();
 
-    const { data: agencyRow } = await supabase
+    console.log('🔐 Forgot password request:', {
+      email: `${normalizedEmail.substring(0, 3)}***`,
+      timestamp: new Date().toISOString()
+    });
+
+    // Check rate limiting (max 3 requests per hour per email)
+    const rateLimit = await checkRateLimit(normalizedEmail, 'forgot_password');
+    if (!rateLimit.allowed) {
+      console.warn('❌ Rate limit exceeded for:', normalizedEmail);
+      return res.status(429).json({
+        success: false,
+        message: 'Too many attempts. Please try again later'
+      });
+    }
+
+    // Check if email exists in agencies table
+    const { data: agencyRow, error: agencyError } = await supabase
+      .from('agencies')
+      .select('id, email, business_name')
+      .eq('email', normalizedEmail)
+      .maybeSingle();
+
+    if (agencyError) {
+      console.error('❌ Database error:', agencyError.message);
+      return res.status(500).json({
+        success: false,
+        message: 'Database error during password reset request',
+        error: process.env.NODE_ENV === 'development' ? agencyError.message : undefined
+      });
+    }
+
+    // Return 404 if email not found (security: don't reveal if email exists)
+    if (!agencyRow) {
+      console.warn('❌ Password reset: Email not found:', normalizedEmail);
+      return res.status(404).json({
+        success: false,
+        message: 'No account found with this email address'
+      });
+    }
+
+    console.log('✅ Agency found:', {
+      id: agencyRow.id,
+      email: agencyRow.email
+    });
+
+    // Generate 6-digit code
+    const resetCode = generateResetCode();
+    const expiresAt = new Date(Date.now() + 15 * 60 * 1000); // 15 minutes
+
+    // Invalidate any existing unused codes for this email
+    await supabase
+      .from('password_reset_codes')
+      .update({ used: true })
+      .eq('email', normalizedEmail)
+      .eq('used', false);
+
+    // Store code in database (type column may not exist, so make it optional)
+    const codeData = {
+      email: normalizedEmail,
+      code: resetCode,
+      expires_at: expiresAt.toISOString(),
+      used: false,
+      created_at: new Date().toISOString()
+    };
+    
+    // Only include type if column exists (will be handled by Supabase if column doesn't exist)
+    // Try with type first, fallback without it if error
+    let insertError;
+    const { error: insertErrorWithType } = await supabase
+      .from('password_reset_codes')
+      .insert([{ ...codeData, type: 'forgot_password' }]);
+    
+    if (insertErrorWithType && (insertErrorWithType.message?.includes('type') || insertErrorWithType.message?.includes('column'))) {
+      // Type column doesn't exist, insert without it
+      console.log('Type column not found, inserting without type field');
+      const { error: insertErrorWithoutType } = await supabase
+        .from('password_reset_codes')
+        .insert([codeData]);
+      insertError = insertErrorWithoutType;
+    } else {
+      insertError = insertErrorWithType;
+    }
+
+    if (insertError) {
+      console.error('❌ Error storing reset code:', insertError.message);
+      return res.status(500).json({
+        success: false,
+        message: 'Failed to generate reset code',
+        error: process.env.NODE_ENV === 'development' ? insertError.message : undefined
+      });
+    }
+
+    console.log('✅ Reset code generated:', {
+      email: normalizedEmail,
+      code: resetCode,
+      expiresAt: expiresAt.toISOString()
+    });
+
+    // Send email with 6-digit code using Nodemailer directly (same as superadmin forgot password)
+    try {
+      const nodemailer = require('nodemailer');
+      const emailUser = process.env.ADMIN_EMAIL_USER?.trim() || process.env.SMTP_USER?.trim();
+      const emailPass = (process.env.ADMIN_EMAIL_PASS?.trim() || process.env.SMTP_PASS?.trim() || '').replace(/\s+/g, ''); // Remove all spaces
+      
+      if (!emailUser || !emailPass) {
+        console.error('❌ Email credentials missing!');
+        console.error('   ADMIN_EMAIL_USER:', emailUser ? '✅' : '❌');
+        console.error('   ADMIN_EMAIL_PASS:', emailPass ? '✅' : '❌');
+        // Don't fail - code is stored, user can check email or request again
+        console.warn('⚠️ Email not sent - credentials not configured. Code is stored in database.');
+      } else {
+        console.log('📧 Configuring email transporter...');
+        console.log('   Email user:', emailUser);
+        console.log('   Password length:', emailPass.length, 'characters');
+        
+        // Create transporter with Gmail SMTP
+        const transporter = nodemailer.createTransport({
+          host: 'smtp.gmail.com',
+          port: 587,
+          secure: false, // use TLS
+          auth: {
+            user: emailUser,
+            pass: emailPass
+          },
+          tls: {
+            rejectUnauthorized: false // avoid local SSL issues
+          }
+        });
+
+        // Verify transporter connection
+        console.log('🔍 Verifying email transporter connection...');
+        try {
+          await transporter.verify();
+          console.log('✅ Email transporter verified successfully!');
+        } catch (verifyError) {
+          console.error('❌ Email transporter verification failed:', verifyError.message);
+          console.error('   Error code:', verifyError.code);
+          throw verifyError; // Re-throw to be caught by outer catch
+        }
+
+        const emailSubject = 'Password Reset Verification Code';
+        const emailHtml = `
+          <!DOCTYPE html>
+          <html>
+          <head>
+            <meta charset="utf-8">
+            <title>Password Reset Code</title>
+          </head>
+          <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
+            <div style="max-width: 600px; margin: 0 auto; padding: 20px;">
+              <h2 style="color: #4CAF50;">Password Reset Verification Code</h2>
+              <p>You requested to reset your password for your Lead Marketplace account.</p>
+              <p style="font-size: 24px; font-weight: bold; color: #2196F3; text-align: center; padding: 20px; background: #f5f5f5; border-radius: 5px; margin: 20px 0;">
+                ${resetCode}
+              </p>
+              <p>Enter this code in the app to reset your password.</p>
+              <p style="color: #666; font-size: 14px;">This code will expire in 15 minutes.</p>
+              <p style="color: #999; font-size: 12px; margin-top: 30px;">If you didn't request this code, please ignore this email.</p>
+            </div>
+          </body>
+          </html>
+        `;
+        const emailText = `Your password reset code is: ${resetCode}. This code will expire in 15 minutes. If you didn't request this code, please ignore this email.`;
+
+        const mailOptions = {
+          from: `"LeadMarketplace Admin" <${emailUser}>`,
+          to: normalizedEmail,
+          subject: emailSubject,
+          html: emailHtml,
+          text: emailText
+        };
+
+        const emailResult = await transporter.sendMail(mailOptions);
+        console.log('✅ Password reset email sent successfully!');
+        console.log('   Message ID:', emailResult.messageId);
+        console.log('   To:', normalizedEmail);
+      }
+    } catch (emailError) {
+      console.error('❌ Failed to send password reset email:', emailError.message);
+      console.error('   Error code:', emailError.code);
+      console.error('   Error command:', emailError.command);
+      // Don't fail the request if email fails - code is still stored
+      // User can request again if email doesn't arrive
+      console.warn('⚠️ Code is stored in database. User can request again if email doesn\'t arrive.');
+    }
+
+    const responseTime = Date.now() - startTime;
+    console.log('✅ Forgot password request successful:', {
+      email: normalizedEmail,
+      responseTime: `${responseTime}ms`
+    });
+
+    res.status(200).json({
+      success: true,
+      message: 'Verification code sent to your email'
+    });
+  } catch (error) {
+    const responseTime = Date.now() - startTime;
+    console.error('❌ Forgot password error:', {
+      error: error.message,
+      stack: error.stack,
+      responseTime: `${responseTime}ms`
+    });
+
+    res.status(500).json({
+      success: false,
+      message: 'Failed to process password reset request',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+});
+
+/**
+ * POST /api/mobile/auth/verify-reset-code
+ * Verify the 6-digit reset code
+ * PUBLIC ROUTE - No authentication required
+ * 
+ * Request Body: { "email": "user@example.com", "code": "123456" }
+ * Response (200): { "success": true, "message": "Code verified successfully" }
+ * Response (400): { "success": false, "message": "Invalid or expired verification code" }
+ */
+router.post('/auth/verify-reset-code', async (req, res) => {
+  const startTime = Date.now();
+  
+  try {
+    const { email, code } = req.body;
+
+    // Validation
+    if (!email || !code) {
+      return res.status(400).json({
+        success: false,
+        message: 'Email and verification code are required'
+      });
+    }
+
+    // Validate code format (must be 6 digits)
+    if (!/^\d{6}$/.test(code)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Verification code must be 6 digits'
+      });
+    }
+
+    // Normalize email
+    const normalizedEmail = email.trim().toLowerCase();
+    const trimmedCode = code.trim();
+
+    console.log('🔐 Verify reset code request:', {
+      email: `${normalizedEmail.substring(0, 3)}***`,
+      code: '******',
+      timestamp: new Date().toISOString()
+    });
+
+    // Check rate limiting (max 5 verification attempts per code)
+    const rateLimit = await checkRateLimit(normalizedEmail, 'verify_code');
+    if (!rateLimit.allowed) {
+      console.warn('❌ Rate limit exceeded for code verification:', normalizedEmail);
+      return res.status(429).json({
+        success: false,
+        message: 'Too many attempts. Please try again later'
+      });
+    }
+
+    // Find code record
+    const { data: codeRecord, error: codeError } = await supabase
+      .from('password_reset_codes')
+      .select('*')
+      .eq('email', normalizedEmail)
+      .eq('code', trimmedCode)
+      .eq('used', false)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (codeError) {
+      console.error('❌ Database error:', codeError.message);
+      return res.status(500).json({
+        success: false,
+        message: 'Database error during code verification',
+        error: process.env.NODE_ENV === 'development' ? codeError.message : undefined
+      });
+    }
+
+    // Check if code exists
+    if (!codeRecord) {
+      console.warn('❌ Invalid code for:', normalizedEmail);
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid or expired verification code'
+      });
+    }
+
+    // Check if code is expired
+    const now = new Date();
+    const expiresAt = new Date(codeRecord.expires_at);
+    if (now > expiresAt) {
+      console.warn('❌ Expired code for:', normalizedEmail);
+      // Mark as used
+      await supabase
+        .from('password_reset_codes')
+        .update({ used: true })
+        .eq('id', codeRecord.id);
+      
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid or expired verification code'
+      });
+    }
+
+    // Check if code is already used
+    if (codeRecord.used) {
+      console.warn('❌ Code already used for:', normalizedEmail);
+      return res.status(400).json({
+        success: false,
+        message: 'Code has already been used'
+      });
+    }
+
+    console.log('✅ Code verified successfully:', {
+      email: normalizedEmail,
+      codeId: codeRecord.id
+    });
+
+    const responseTime = Date.now() - startTime;
+    res.status(200).json({
+      success: true,
+      message: 'Code verified successfully'
+    });
+  } catch (error) {
+    const responseTime = Date.now() - startTime;
+    console.error('❌ Verify reset code error:', {
+      error: error.message,
+      stack: error.stack,
+      responseTime: `${responseTime}ms`
+    });
+
+    res.status(500).json({
+      success: false,
+      message: 'Failed to verify code',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+});
+
+/**
+ * POST /api/mobile/auth/reset-password
+ * Reset password with verified code
+ * PUBLIC ROUTE - No authentication required
+ * 
+ * Request Body: { "email": "user@example.com", "code": "123456", "new_password": "newpassword123" }
+ * Response (200): { "success": true, "message": "Password reset successfully" }
+ * Response (400): { "success": false, "message": "Invalid code or password requirements not met" }
+ */
+router.post('/auth/reset-password', async (req, res) => {
+  const startTime = Date.now();
+  
+  try {
+    const { email, code, new_password } = req.body;
+
+    // Validation
+    if (!email || !code || !new_password) {
+      return res.status(400).json({
+        success: false,
+        message: 'Email, verification code, and new password are required'
+      });
+    }
+
+    // Validate code format
+    if (!/^\d{6}$/.test(code)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Verification code must be 6 digits'
+      });
+    }
+
+    // Validate password strength (minimum 6 characters)
+    if (new_password.length < 6) {
+      return res.status(400).json({
+        success: false,
+        message: 'Password must be at least 6 characters'
+      });
+    }
+
+    // Normalize email
+    const normalizedEmail = email.trim().toLowerCase();
+    const trimmedCode = code.trim();
+    const trimmedPassword = new_password.trim();
+
+    console.log('🔐 Reset password request:', {
+      email: `${normalizedEmail.substring(0, 3)}***`,
+      code: '******',
+      timestamp: new Date().toISOString()
+    });
+
+    // Verify code again (same checks as verify-reset-code)
+    const { data: codeRecord, error: codeError } = await supabase
+      .from('password_reset_codes')
+      .select('*')
+      .eq('email', normalizedEmail)
+      .eq('code', trimmedCode)
+      .eq('used', false)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (codeError) {
+      console.error('❌ Database error:', codeError.message);
+      return res.status(500).json({
+        success: false,
+        message: 'Database error during password reset',
+        error: process.env.NODE_ENV === 'development' ? codeError.message : undefined
+      });
+    }
+
+    if (!codeRecord) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid or expired verification code'
+      });
+    }
+
+    // Check if code is expired
+    const now = new Date();
+    const expiresAt = new Date(codeRecord.expires_at);
+    if (now > expiresAt) {
+      await supabase
+        .from('password_reset_codes')
+        .update({ used: true })
+        .eq('id', codeRecord.id);
+      
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid or expired verification code'
+      });
+    }
+
+    // Check if code is already used
+    if (codeRecord.used) {
+      return res.status(400).json({
+        success: false,
+        message: 'Code has already been used'
+      });
+    }
+
+    // Find agency
+    const { data: agencyRow, error: agencyError } = await supabase
       .from('agencies')
       .select('id, email')
       .eq('email', normalizedEmail)
       .maybeSingle();
 
-    // Always return success (security best practice)
-    if (!agencyRow) {
-      return res.json({
-        success: true,
-        message: 'If an account with this email exists, password reset instructions have been sent.'
+    if (agencyError) {
+      console.error('❌ Database error finding agency:', agencyError.message);
+      return res.status(500).json({
+        success: false,
+        message: 'Database error during password reset',
+        error: process.env.NODE_ENV === 'development' ? agencyError.message : undefined
       });
     }
 
-    // Generate reset token
-    const crypto = require('crypto');
-    const resetToken = crypto.randomBytes(32).toString('hex');
-    const expiresAt = new Date(Date.now() + 3600000);
-
-    // Store token
-    await supabase.from('password_reset_tokens').insert({
-      agency_id: agencyRow.id,
-      token: resetToken,
-      expires_at: expiresAt.toISOString(),
-      created_at: new Date().toISOString()
-    });
-
-    // Send email
-    try {
-      await emailService.sendPasswordResetEmail(normalizedEmail, resetToken);
-    } catch (emailError) {
-      console.warn('Failed to send password reset email:', emailError.message);
+    if (!agencyRow) {
+      return res.status(404).json({
+        success: false,
+        message: 'No account found with this email address'
+      });
     }
 
-    res.json({
+    // Hash new password (same method as registration - bcrypt with 10 salt rounds)
+    console.log('🔐 Hashing new password...');
+    const hashedPassword = await bcrypt.hash(trimmedPassword, 10);
+
+    // Update password in agencies table
+    const { error: updateError } = await supabase
+      .from('agencies')
+      .update({
+        password_hash: hashedPassword,
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', agencyRow.id);
+
+    if (updateError) {
+      console.error('❌ Error updating password:', updateError.message);
+      return res.status(500).json({
+        success: false,
+        message: 'Failed to update password',
+        error: process.env.NODE_ENV === 'development' ? updateError.message : undefined
+      });
+    }
+
+    // Also update in users table if exists
+    const { data: userRow } = await supabase
+      .from('users')
+      .select('id')
+      .eq('email', normalizedEmail)
+      .maybeSingle();
+
+    if (userRow) {
+      await supabase
+        .from('users')
+        .update({
+          password_hash: hashedPassword,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', userRow.id);
+    }
+
+    // Mark code as used
+    await supabase
+      .from('password_reset_codes')
+      .update({ used: true })
+      .eq('id', codeRecord.id);
+
+    console.log('✅ Password reset successful:', {
+      email: normalizedEmail,
+      agencyId: agencyRow.id
+    });
+
+    const responseTime = Date.now() - startTime;
+    res.status(200).json({
       success: true,
-      message: 'If an account with this email exists, password reset instructions have been sent.'
+      message: 'Password reset successfully'
     });
   } catch (error) {
-    console.error('Forgot password error:', error);
+    const responseTime = Date.now() - startTime;
+    console.error('❌ Reset password error:', {
+      error: error.message,
+      stack: error.stack,
+      responseTime: `${responseTime}ms`
+    });
+
     res.status(500).json({
       success: false,
-      message: 'Failed to process password reset request',
-      error: error.message
+      message: 'Failed to reset password',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
 });

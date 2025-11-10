@@ -38,6 +38,52 @@ app.use((req, res, next) => {
 
   next();
 });
+// ==========================================================
+// 🌐 General CORS Configuration (for all API routes)
+// ==========================================================
+// CORS Configuration - Allow all localhost origins for Flutter web development
+app.use(cors({
+  origin: function (origin, callback) {
+    // Allow requests with no origin (mobile apps, Postman, curl, etc.)
+    if (!origin) {
+      return callback(null, true);
+    }
+    
+    // Allow all localhost origins with any port (Flutter web uses random ports)
+    if (origin.match(/^https?:\/\/localhost(:\d+)?$/)) {
+      return callback(null, true);
+    }
+    
+    // Allow all 127.0.0.1 origins with any port
+    if (origin.match(/^https?:\/\/127\.0\.0\.1(:\d+)?$/)) {
+      return callback(null, true);
+    }
+    
+    // In development, allow all origins
+    if (NODE_ENV === 'development') {
+      return callback(null, true);
+    }
+    
+    // In production, only allow specific origins
+    const allowedOrigins = [
+      'https://super-admin-backend-2sy0.onrender.com',
+      process.env.FRONTEND_URL,
+      process.env.BASE_URL
+    ].filter(Boolean);
+    
+    if (allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    }
+    
+    // Reject unknown origins in production
+    callback(new Error('Not allowed by CORS'));
+  },
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin', 'x-api-key'],
+  exposedHeaders: ['Content-Type', 'Authorization'],
+  maxAge: 86400 // 24 hours
+}));
 
 
 
@@ -109,61 +155,7 @@ app.use(helmet({
   crossOriginEmbedderPolicy: false
 }));
 
-// CORS configuration - Dynamic origin checking with webhook support
-app.use((req, res, next) => {
-  // Skip CORS middleware for webhook routes (handled by earlier middleware)
-  if (req.path.startsWith('/api/webhooks/')) {
-    return next();
-  }
-
-  // Apply CORS middleware for non-webhook routes
-  cors({
-    origin: function (origin, callback) {
-      // Allow requests with no origin (like mobile apps or curl requests)
-      if (!origin) return callback(null, true);
-
-      // Build allowed origins list from environment variables
-      const allowedOrigins = [];
-
-      // Add FRONTEND_URL if provided
-      if (process.env.FRONTEND_URL) {
-        allowedOrigins.push(process.env.FRONTEND_URL);
-      }
-
-      // Add BASE_URL if provided (and different from FRONTEND_URL)
-      if (process.env.BASE_URL && process.env.BASE_URL !== process.env.FRONTEND_URL) {
-        allowedOrigins.push(process.env.BASE_URL);
-      }
-
-      // Add ALLOWED_ORIGINS if provided (comma-separated list)
-      if (process.env.ALLOWED_ORIGINS) {
-        const origins = process.env.ALLOWED_ORIGINS.split(',').map(url => url.trim());
-        allowedOrigins.push(...origins);
-      }
-
-      // In development, allow localhost on any port (if no FRONTEND_URL is set)
-      if (NODE_ENV === 'development' && !process.env.FRONTEND_URL) {
-        if (origin.match(/^https?:\/\/localhost(:\d+)?$/)) {
-          return callback(null, true);
-        }
-        if (origin.match(/^https?:\/\/127\.0\.0\.1(:\d+)?$/)) {
-          return callback(null, true);
-        }
-      }
-
-      if (allowedOrigins.includes(origin)) {
-        return callback(null, true);
-      }
-
-      callback(new Error('Not allowed by CORS'));
-    },
-    credentials: true,
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin', 'x-api-key'],
-    exposedHeaders: ['Content-Length', 'X-Foo', 'X-Bar'],
-    optionsSuccessStatus: 200
-  })(req, res, next);
-});
+// CORS is already configured above - this duplicate middleware removed
 
 // Handle preflight OPTIONS requests for non-webhook routes (Express 5.x compatible)
 app.use((req, res, next) => {
@@ -524,22 +516,28 @@ app.get('/api/proxy', async (req, res) => {
   }
 });
 
-// Health check endpoint (with metrics from observability)
+// Health check endpoint (simple and reliable - critical for Flutter app discovery)
 app.get('/api/health', (req, res) => {
-  const baseHealth = {
-    success: true,
-    message: 'Unified Lead Marketplace Server is healthy',
-    timestamp: new Date().toISOString(),
-    uptime: process.uptime(),
-    environment: NODE_ENV,
-    services: {
-      supabase: supabase ? 'connected' : 'disconnected'
-    }
-  };
-  
-  // Merge with observability health check if available
-  const observabilityHealth = getHealthData();
-  res.status(200).json({ ...baseHealth, ...observabilityHealth });
+  try {
+    res.status(200).json({
+      success: true,
+      status: 'ok',
+      message: 'Server is running and ready',
+      timestamp: new Date().toISOString(),
+      uptime: process.uptime(),
+      environment: NODE_ENV || 'development',
+      port: PORT || 3000
+    });
+  } catch (error) {
+    // Fallback response if anything fails
+    console.error('Health check error:', error);
+    res.status(200).json({
+      success: true,
+      status: 'ok',
+      message: 'Server is running',
+      timestamp: new Date().toISOString()
+    });
+  }
 });
 
 // Metrics endpoint (for monitoring)
@@ -922,6 +920,11 @@ app.get('/api', (req, res) => {
     }
   });
 });
+// =====================================================
+// SUPER ADMIN AUTH ROUTES (JWT + Forgot Password)
+// =====================================================
+const superAdminAuthRoutes = require('./routes/superadminAuthRoutes');
+app.use('/api/superadmin/auth', superAdminAuthRoutes);
 
 // =====================================================
 // PORTAL REGISTRY API (Supabase)
@@ -1958,13 +1961,22 @@ app.use(ErrorHandler.notFound);
 // Start server
 async function startServer() {
   try {
-    // Start server
+    // Check Supabase connection
+    let supabaseStatus = 'Disconnected';
+    try {
+      const supabaseClient = require('./config/supabaseClient');
+      supabaseStatus = 'Connected';
+    } catch (err) {
+      console.warn('⚠️ Supabase client initialization warning:', err.message);
+    }
+
+    // Start server on primary port
     const server = app.listen(PORT, () => {
       console.log('\n🚀 Lead Marketplace Unified Server running!');
       console.log(`🌐 Frontend: http://localhost:${PORT}`);
       console.log(`🔗 Health check: http://localhost:${PORT}/api/health`);
       console.log(`📚 API Documentation: http://localhost:${PORT}/api`);
-      console.log(`📊 Supabase: ${supabase ? 'Connected' : 'Disconnected'}`);
+      console.log(`📊 Supabase: ${supabaseStatus}`);
       console.log(`✅ Ready to handle requests!`);
       console.log('\n📋 Available Features:');
       console.log('  🏢 Portal Registry (Supabase)');
@@ -1975,6 +1987,33 @@ async function startServer() {
       console.log('  💰 Billing & Payments (Supabase)');
       console.log('\n✨ Unified Admin Portal with Supabase database!');
     });
+    
+    // Also listen on ports 3000 and 3001 for Flutter web compatibility
+    if (PORT === 3002) {
+      const http = require('http');
+      
+      // Port 3000
+      try {
+        const server3000 = http.createServer(app);
+        server3000.listen(3000, '0.0.0.0', () => {
+          console.log(`🌐 Also listening on port 3000: http://localhost:3000`);
+        });
+        server3000.timeout = 30000;
+      } catch (err) {
+        console.warn('⚠️ Could not start server on port 3000:', err.message);
+      }
+      
+      // Port 3001 (Flutter tries this first)
+      try {
+        const server3001 = http.createServer(app);
+        server3001.listen(3001, '0.0.0.0', () => {
+          console.log(`🌐 Also listening on port 3001: http://localhost:3001`);
+        });
+        server3001.timeout = 30000;
+      } catch (err) {
+        console.warn('⚠️ Could not start server on port 3001:', err.message);
+      }
+    }
     
     // Set server timeout
     server.timeout = 30000; // 30 seconds
