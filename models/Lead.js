@@ -44,6 +44,24 @@ module.exports = (sequelize, DataTypes) => {
       allowNull: true,
       field: 'phone_number'
     },
+    firstName: {
+      type: DataTypes.STRING(100),
+      allowNull: true,
+      field: 'first_name'
+    },
+    lastName: {
+      type: DataTypes.STRING(100),
+      allowNull: true,
+      field: 'last_name'
+    },
+    phone: {
+      type: DataTypes.STRING(20),
+      allowNull: true
+    },
+    address: {
+      type: DataTypes.TEXT,
+      allowNull: true
+    },
     city: {
       type: DataTypes.STRING(100),
       allowNull: true
