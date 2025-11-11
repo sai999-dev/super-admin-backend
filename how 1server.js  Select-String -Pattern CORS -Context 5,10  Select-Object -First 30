@@ -1,0 +1,62 @@
+[1mdiff --cc server.js[m
+[1mindex be72461,4fb4f2a..0000000[m
+[1m--- a/server.js[m
+[1m+++ b/server.js[m
+[36m@@@ -155,21 -82,34 +82,50 @@@[m [mapp.use(helmet([m
+    crossOriginEmbedderPolicy: false[m
+  }));[m
+  [m
+[31m- // CORS is already configured above - this duplicate middleware removed[m
+[31m- [m
+[31m- // Handle preflight OPTIONS requests for non-webhook routes (Express 5.x compatible)[m
+[32m+ // CORS configuration[m
+[32m+ // IMPORTANT: Handle OPTIONS requests BEFORE cors middleware to ensure custom headers are included[m
+[32m++// ✅ CORS Setup for Webhooks - Allow ALL origins for webhook routes (authenticated via API key)[m
+  app.use((req, res, next) => {[m
+[31m-   // Webhook OPTIONS already handled by earlier middleware[m
+[32m++  // Handle webhook endpoints with special CORS (allow all origins, protected by API key)[m
+[32m +  if (req.path.startsWith('/api/webhooks/')) {[m
+[32m++    const origin = req.headers.origin;[m
+[32m++    res.setHeader('Access-Control-Allow-Origin', origin || '*');[m
+[32m++    res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');[m
+[32m++    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, x-api-key, Authorization');[m
+[32m++    res.setHeader('Access-Control-Allow-Credentials', 'true');[m
+[32m++    [m
+[32m++    if (req.method === 'OPTIONS') {[m
+[32m++      return res.sendStatus(204);[m
+[32m++    }[m
+[32m +    return next();[m
+[32m +  }[m
+[32m +[m
+[32m++  // Handle preflight OPTIONS requests for non-webhook routes[m
+    if (req.method === 'OPTIONS') {[m
+[31m-     res.header('Access-Control-Allow-Origin', req.headers.origin || '*');[m
+[32m+     const origin = req.headers.origin;[m
+[32m+     [m
+[32m+     // Allow localhost on any port in development[m
+[32m+     const isLocalhost = origin && ([m
+[32m+       origin.match(/^https?:\/\/localhost(:\d+)?$/) ||[m
+[32m+       origin.match(/^https?:\/\/127\.0\.0\.1(:\d+)?$/) ||[m
+[32m+       origin === 'http://localhost:8080' ||[m
+[32m+       origin === 'http://localhost:3002' ||[m
+[32m+       origin === 'http://localhost:3000'[m
+[32m+     );[m
+[32m+     [m
+[32m+     if (NODE_ENV === 'development' && isLocalhost) {[m
+[32m+       res.header('Access-Control-Allow-Origin', origin);[m
+[32m+     } else if (origin) {[m
+[32m+       res.header('Access-Control-Allow-Origin', origin);[m
+[32m+     } else {[m
+[32m+       res.header('Access-Control-Allow-Origin', '*');[m
+[32m+     }[m
+[32m+     [m
+      res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS, PATCH');[m
+[31m-     res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept, Origin, x-api-key');[m
+[32m+     res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept, Origin, X-API-Key, x-api-key, X-Api-Key, x-apikey');[m
+      res.header('Access-Control-Allow-Credentials', 'true');[m
+[31m-     return res.sendStatus(200);[m
+[32m+     res.header('Access-Control-Max-Age', '86400'); // 24 hours[m
+[32m+     return res.status(200).end();[m
+    }[m
+    next();[m
+  });[m
