@@ -10,10 +10,14 @@ const logger = require('../utils/logger');
 class LeadIngestionService {
   /** Transform portal payload to unified_leads schema */
   transformData(payload, portal) {
+    const mappedIndustry = payload.industry || portal.industry || 'non_healthcare';
+
+    console.log(`🧩 Industry mapped as → ${mappedIndustry}`);
+
     return {
       portal_id: portal.id,
       portal_code: portal.portal_code || null,
-      industry: portal.industry || 'non_healthcare',
+      industry: mappedIndustry,
       lead_name:
         payload.name ||
         payload.lead_name ||
