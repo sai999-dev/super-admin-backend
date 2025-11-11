@@ -997,6 +997,7 @@ router.get('/profile', authenticateAgency, async (req, res) => {
       success: true,
       data: {
         ...agency,
+        zipcodes: agencyRow.zipcodes || agencyRow.primary_zipcodes || [],  // Ensure zipcodes are included
         subscription: subscription || null,
         territories_count: territoriesCount || 0
       }

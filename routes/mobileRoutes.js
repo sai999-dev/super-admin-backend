@@ -126,6 +126,12 @@ router.post('/auth/register', async (req, res) => {
     if (business_name && business_name !== agency_name) {
       agencyData.business_name = business_name;  // ✅ Column exists!
     }
+    
+    // Add zipcodes if provided (column EXISTS in database)
+    if (zipcodes && Array.isArray(zipcodes) && zipcodes.length > 0) {
+      agencyData.zipcodes = zipcodes;  // ✅ Column exists as TEXT[]
+      console.log('✅ Adding zipcodes to agency:', zipcodes);
+    }
     // Note: contact_name column doesn't exist in database - skipping it
     // if (contact_name) {
     //   agencyData.contact_name = contact_name;  // Column doesn't exist - commented out
@@ -377,6 +383,7 @@ router.post('/auth/register', async (req, res) => {
       email: normalizedAgency.email,
       agency_name: agencyName,
       message: 'Registration successful',
+      zipcodes: createdAgency.zipcodes || [],  // Include zipcodes from registration
       user_profile: {
         email: normalizedAgency.email,
         agency_name: agencyName
@@ -483,7 +490,8 @@ router.post('/auth/login', async (req, res) => {
       data: {
         agency_id: normalizedAgency.id,
         business_name: normalizedAgency.business_name,
-        email: normalizedAgency.email
+        email: normalizedAgency.email,
+        zipcodes: agencyRow.zipcodes || []  // Include zipcodes from database
       }
     });
   } catch (error) {
