@@ -16,9 +16,22 @@ const crypto = require('crypto');
 const path = require('path');
 const fs = require('fs');
 const { performanceMonitor, errorTracker, getHealthData } = require('./middleware/observability');
+
+// Import services for webhook processing (moved to webhook handler to avoid circular dependencies)
+
+// Load environment variables from config.env (try multiple locations)
+dotenv.config({ path: path.join(__dirname, 'config.env') });
+dotenv.config({ path: path.join(__dirname, '..', 'config.env') });
+dotenv.config(); // Also try default .env location
+
 const app = express();
+const PORT = process.env.PORT || 3000;
+const NODE_ENV = process.env.NODE_ENV || 'development';
 
-
+console.log('🚀 Starting Lead Marketplace Unified Server...');
+console.log(`📝 Environment: ${NODE_ENV}`);
+console.log(`🔑 JWT Secret loaded: ${process.env.JWT_SECRET ? 'Yes' : 'No'}`);
+console.log(`🔐 Demo token enabled: ${NODE_ENV === 'development' ? 'Yes' : 'No'}`);
 
 // ✅ CORS Setup for Webhooks - Allow ALL origins for webhook routes (authenticated via API key)
 app.use((req, res, next) => {
@@ -90,30 +103,6 @@ app.use(cors({
 // Parse incoming requests
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
-
-
-
-// Import services for webhook processing (moved to webhook handler to avoid circular dependencies)
-
-// Load environment variables from config.env (try multiple locations)
-dotenv.config({ path: path.join(__dirname, 'config.env') });
-dotenv.config({ path: path.join(__dirname, '..', 'config.env') });
-dotenv.config(); // Also try default .env location
-
-const app = express();
-const PORT = process.env.PORT || 3000;
-const NODE_ENV = process.env.NODE_ENV || 'development';
-
-
-app.listen(PORT, "0.0.0.0", () => {
-  console.log(`✅ Server running on port ${PORT}`);
-});
-
-
-console.log('🚀 Starting Lead Marketplace Unified Server...');
-console.log(`📝 Environment: ${NODE_ENV}`);
-console.log(`🔑 JWT Secret loaded: ${process.env.JWT_SECRET ? 'Yes' : 'No'}`);
-console.log(`🔐 Demo token enabled: ${NODE_ENV === 'development' ? 'Yes' : 'No'}`);
 
 // =====================================================
 // MIDDLEWARE SETUP
