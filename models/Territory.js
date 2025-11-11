@@ -28,14 +28,19 @@ module.exports = (sequelize, DataTypes) => {
         key: 'id'
       }
     },
+    activeSubscriptionId: {
+      type: DataTypes.UUID,
+      allowNull: true,
+      field: 'active_subscription_id'
+    },
     type: {
-      type: DataTypes.ENUM('zipcode', 'city', 'county', 'state'),
-      allowNull: false,
+      type: DataTypes.STRING(50),
+      allowNull: true,
       defaultValue: 'zipcode'
     },
     value: {
       type: DataTypes.STRING(100),
-      allowNull: false,
+      allowNull: true,
       comment: 'Zipcode, city name, county name, or state code'
     },
     state: {
@@ -55,12 +60,6 @@ module.exports = (sequelize, DataTypes) => {
       type: DataTypes.STRING(10),
       allowNull: true
     },
-    isActive: {
-      type: DataTypes.BOOLEAN,
-      allowNull: false,
-      defaultValue: true,
-      field: 'is_active'
-    },
     priority: {
       type: DataTypes.INTEGER,
       allowNull: false,
@@ -71,22 +70,11 @@ module.exports = (sequelize, DataTypes) => {
       },
       comment: 'Lead distribution priority (0-10)'
     },
-    addedBy: {
-      type: DataTypes.UUID,
-      allowNull: true,
-      field: 'added_by',
-      comment: 'Admin user ID who added this territory'
-    },
-    deletedAt: {
-      type: DataTypes.DATE,
-      allowNull: true,
-      field: 'deleted_at'
-    },
-    deletedBy: {
-      type: DataTypes.UUID,
-      allowNull: true,
-      field: 'deleted_by',
-      comment: 'Admin user ID who deleted this territory'
+    isActive: {
+      type: DataTypes.BOOLEAN,
+      allowNull: false,
+      defaultValue: true,
+      field: 'is_active'
     },
     metadata: {
       type: DataTypes.JSONB,

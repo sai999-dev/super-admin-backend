@@ -1,0 +1,88 @@
+[
+  {
+    "table": "subscription_plans",
+    "type": "extra_in_db",
+    "columns": [
+      "name",
+      "description",
+      "features",
+      "metadata"
+    ]
+  },
+  {
+    "table": "subscriptions",
+    "type": "extra_in_db",
+    "columns": [
+      "status",
+      "metadata",
+      "current_units"
+    ]
+  },
+  {
+    "table": "agencies",
+    "type": "missing_in_db",
+    "columns": [
+      "phone_number",
+      "stripe_customer_id",
+      "is_active"
+    ]
+  },
+  {
+    "table": "agencies",
+    "type": "extra_in_db",
+    "columns": [
+      "email",
+      "status",
+      "industry",
+      "zipcodes",
+      "territories"
+    ]
+  },
+  {
+    "table": "territories",
+    "type": "extra_in_db",
+    "columns": [
+      "type",
+      "value",
+      "state",
+      "metadata",
+      "priority",
+      "zipcode",
+      "city",
+      "county"
+    ]
+  },
+  {
+    "table": "leads",
+    "type": "extra_in_db",
+    "columns": [
+      "email",
+      "timeline",
+      "needs",
+      "source",
+      "status",
+      "phone",
+      "address",
+      "city",
+      "state",
+      "zipcode"
+    ]
+  },
+  {
+    "table": "users",
+    "type": "extra_in_db",
+    "columns": [
+      "agency_id",
+      "email",
+      "role",
+      "metadata"
+    ]
+  },
+  {
+    "table": "portals",
+    "type": "extra_in_db",
+    "columns": [
+      "industry"
+    ]
+  }
+]

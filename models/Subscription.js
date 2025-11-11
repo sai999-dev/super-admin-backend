@@ -28,10 +28,55 @@ module.exports = (sequelize, DataTypes) => {
         key: 'id'
       }
     },
+    customPrice: {
+      type: DataTypes.DECIMAL(10, 2),
+      allowNull: true,
+      field: 'custom_price'
+    },
+    unitsPurchased: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+      field: 'units_purchased'
+    },
+    trialStart: {
+      type: DataTypes.DATE,
+      allowNull: true,
+      field: 'trial_start'
+    },
+    trialEnd: {
+      type: DataTypes.DATE,
+      allowNull: true,
+      field: 'trial_end'
+    },
+    currentPeriodStart: {
+      type: DataTypes.DATE,
+      allowNull: true,
+      field: 'current_period_start'
+    },
+    currentPeriodEnd: {
+      type: DataTypes.DATE,
+      allowNull: true,
+      field: 'current_period_end'
+    },
+    autoRenew: {
+      type: DataTypes.BOOLEAN,
+      defaultValue: true,
+      field: 'auto_renew'
+    },
     status: {
-      type: DataTypes.ENUM('trial', 'active', 'suspended', 'cancelled', 'expired'),
-      allowNull: false,
-      defaultValue: 'trial'
+      type: DataTypes.STRING(50),
+      defaultValue: 'trial',
+      allowNull: false
+    },
+    stripeSubscriptionId: {
+      type: DataTypes.STRING(255),
+      allowNull: true,
+      field: 'stripe_subscription_id'
+    },
+    metadata: {
+      type: DataTypes.JSONB,
+      allowNull: true,
+      defaultValue: {}
     },
     currentUnits: {
       type: DataTypes.INTEGER,
@@ -56,7 +101,7 @@ module.exports = (sequelize, DataTypes) => {
       comment: 'Override plan pricing for this subscription'
     },
     billingCycle: {
-      type: DataTypes.ENUM('monthly', 'quarterly', 'yearly'),
+      type: DataTypes.STRING(50),
       allowNull: false,
       defaultValue: 'monthly',
       field: 'billing_cycle'
@@ -87,36 +132,9 @@ module.exports = (sequelize, DataTypes) => {
       allowNull: true,
       field: 'last_billing_date'
     },
-    autoRenew: {
-      type: DataTypes.BOOLEAN,
-      allowNull: false,
-      defaultValue: true,
-      field: 'auto_renew'
-    },
-    cancelledAt: {
-      type: DataTypes.DATE,
-      allowNull: true,
-      field: 'cancelled_at'
-    },
-    cancelledBy: {
-      type: DataTypes.UUID,
-      allowNull: true,
-      field: 'cancelled_by',
-      comment: 'Admin user ID who cancelled'
-    },
-    cancellationReason: {
-      type: DataTypes.TEXT,
-      allowNull: true,
-      field: 'cancellation_reason'
-    },
     notes: {
       type: DataTypes.TEXT,
       allowNull: true
-    },
-    metadata: {
-      type: DataTypes.JSONB,
-      allowNull: true,
-      defaultValue: {}
     }
   }, {
     tableName: 'subscriptions',
