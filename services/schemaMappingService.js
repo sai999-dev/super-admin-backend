@@ -10,18 +10,21 @@ class SchemaMappingService {
     this.defaultMappings = {
       // Name field variations
       name: ['name', 'full_name', 'lead_name', 'contact_name', 'customer_name', 'client_name', 'first_name', 'last_name'],
-      
+
       // Phone field variations
       phone: ['phone', 'phone_number', 'phoneNumber', 'contact_no', 'contact_phone', 'mobile', 'telephone', 'tel', 'cell', 'contact'],
-      
+
       // Email field variations
       email: ['email', 'email_address', 'emailAddress', 'contact_email', 'customer_email', 'e_mail', 'e-mail'],
-      
+
       // Location field variations
       city: ['city', 'location_city', 'address_city', 'town'],
       state: ['state', 'state_code', 'province', 'region'],
       zipcode: ['zipcode', 'zip_code', 'zipCode', 'postal_code', 'postal', 'zip'],
-      country: ['country', 'country_code', 'nation']
+      country: ['country', 'country_code', 'nation'],
+
+      // Industry field variations
+      industry: ['industry', 'industry_type', 'business_type', 'sector', 'vertical']
     };
   }
 
