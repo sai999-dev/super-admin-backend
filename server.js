@@ -1723,9 +1723,12 @@ app.post('/api/webhooks/:portal_code', async (req, res) => {
         preferred_location: req.body.preferred_location || null
       };
 
-      // 🔄 Round-robin agency assignment
+      // 🔄 Smart agency assignment based on industry and zipcode
       const leadIngestionService = require('./services/leadIngestionService');
-      const assignedAgencyId = await leadIngestionService.getNextAgency();
+      const leadIndustry = unifiedLeadResult.lead.industry || req.body.industry || portal.industry;
+      const leadZipcode = unifiedLeadResult.lead.zipcode || req.body.zipcode || req.body.zip_code;
+      console.log(`🎯 Assigning agency for industry="${leadIndustry}" and zipcode="${leadZipcode}"`);
+      const assignedAgencyId = await leadIngestionService.getNextAgency(leadIndustry, leadZipcode);
 
       // Save to audit_logs table with unique lead ID and assigned agency
       const { data: auditLogData, error: auditLogError } = await supabase
