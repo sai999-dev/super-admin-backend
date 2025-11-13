@@ -1,19 +1,26 @@
 /**
  * Lead Ingestion Service
- * Handles transformation, validation, smart round-robin assignment,
+ * Handles transformation, validation, industry + zipcode-based round robin assignment,
  * and logging of leads from external portals.
  */
 
 const supabase = require('../config/supabaseClient');
 const logger = require('../utils/logger');
 
+// --- Utility function: calculate numeric distance between zipcodes ---
+function calculateZipDistance(zip1, zip2) {
+  if (!zip1 || !zip2) return Infinity;
+  const num1 = parseInt(zip1.toString().replace(/\D/g, ''), 10);
+  const num2 = parseInt(zip2.toString().replace(/\D/g, ''), 10);
+  if (isNaN(num1) || isNaN(num2)) return Infinity;
+  return Math.abs(num1 - num2);
+}
+
 class LeadIngestionService {
   /** Transform portal payload to unified_leads schema */
   transformData(payload, portal) {
     const mappedIndustry = payload.industry || portal.industry || 'non_healthcare';
-    const mappedZipcode = payload.zipcode || payload.zip_code || null;
-
-    console.log(`🧩 Industry: ${mappedIndustry}, Zipcode: ${mappedZipcode}`);
+    console.log(`🧩 Industry mapped as → ${mappedIndustry}`);
 
     return {
       portal_id: portal.id,
@@ -27,11 +34,14 @@ class LeadIngestionService {
         'Unknown',
       email: payload.email || payload.email_address || null,
       phone_number:
-        payload.phone || payload.phone_number || payload.contact || null,
+        payload.phone ||
+        payload.phone_number ||
+        payload.contact ||
+        null,
       property_type: payload.propertyType || payload.property_type || null,
       budget_range: payload.budgetRange || payload.budget || null,
       preferred_location: payload.preferredLocation || null,
-      zipcode: mappedZipcode,
+      zipcode: payload.zipcode || payload.zip_code || payload.zip || null,
       needs: payload.needs || payload.requirements || null,
       additional_details: payload.additionalDetails || null,
       source: portal.portal_name || 'external_portal',
@@ -50,91 +60,91 @@ class LeadIngestionService {
     return { valid: errors.length === 0, errors };
   }
 
-  /**
-   * Smart Round-Robin Agency Assignment
-   * Matches by Industry + Zipcode, falls back to nearest zipcode if none match.
-   */
-  async getNextAgency(industry, leadZipcode) {
+  /** Industry + zipcode-based Round-robin agency assignment */
+  async getNextAgency(leadIndustry, leadZip) {
     try {
-      // 1️⃣ Fetch all active agencies in the same industry
+      // 1️⃣ Get all ACTIVE agencies in same industry
       const { data: agencies, error: agencyError } = await supabase
         .from('agencies')
-        .select('id, agency_name, industry, zipcode, status')
-        .eq('status', 'ACTIVE')
-        .eq('industry', industry);
+        .select('id, agency_name, industry, zipcodes, status')
+        .eq('status', 'ACTIVE');
 
       if (agencyError) throw agencyError;
       if (!agencies?.length) {
-        logger.warn(`⚠️ No active agencies for industry: ${industry}`);
+        logger.warn('⚠️ No active agencies available.');
         return null;
       }
 
-      // 2️⃣ Filter same-zipcode agencies
-      let eligibleAgencies = agencies.filter(a => a.zipcode === leadZipcode);
+      // Filter by matching industry
+      const sameIndustryAgencies = agencies.filter(
+        (a) =>
+          a.industry &&
+          a.industry.toLowerCase().trim() === leadIndustry.toLowerCase().trim()
+      );
 
-      // 3️⃣ If no exact zip match, find nearest zipcode numerically
-      if (!eligibleAgencies.length && leadZipcode) {
-        const leadZipNum = Number(leadZipcode);
+      let filteredAgencies = sameIndustryAgencies.length
+        ? sameIndustryAgencies
+        : agencies; // fallback to all
+
+      // 2️⃣ If zipcode present, try to find the nearest one
+      let selectedAgency = null;
+      if (leadZip && filteredAgencies.length > 0) {
         let minDistance = Infinity;
-        let closestZip = null;
+        for (const agency of filteredAgencies) {
+          if (!agency.zipcodes) continue;
 
-        for (const agency of agencies) {
-          if (agency.zipcode) {
-            const diff = Math.abs(Number(agency.zipcode) - leadZipNum);
-            if (diff < minDistance) {
-              minDistance = diff;
-              closestZip = agency.zipcode;
+          // agency.zipcodes may be a comma-separated list (e.g. "10001,10002,10003")
+          const zipList = agency.zipcodes.split(',').map((z) => z.trim());
+          for (const z of zipList) {
+            const distance = calculateZipDistance(leadZip, z);
+            if (distance < minDistance) {
+              minDistance = distance;
+              selectedAgency = agency;
             }
           }
         }
 
-        eligibleAgencies = agencies.filter(a => a.zipcode === closestZip);
-        console.log(`📍 No exact zip match. Using nearest zipcode ${closestZip} for industry ${industry}`);
+        if (selectedAgency) {
+          console.log(
+            `📍 Nearest agency found: ${selectedAgency.agency_name} (${selectedAgency.id}) for ZIP ${leadZip}`
+          );
+          return selectedAgency.id;
+        }
       }
 
-      if (!eligibleAgencies.length) {
-        console.warn(`⚠️ No eligible agencies found for industry ${industry}`);
-        return null;
-      }
-
-      // 4️⃣ Fetch or create round-robin state for this (industry + zipcode)
-      const targetZip = eligibleAgencies[0].zipcode || 'unknown';
+      // 3️⃣ If no zipcode match → use round-robin by industry
+      const key = leadIndustry.toLowerCase().replace(/\s+/g, '_');
+      const stateTable = 'round_robin_state'; // persistent state
       let { data: state, error: stateError } = await supabase
-        .from('round_robin_state')
-        .select('id, last_agency_index')
-        .eq('industry', industry)
-        .eq('zipcode', targetZip)
+        .from(stateTable)
+        .select('id, last_agency_index, industry_key')
+        .eq('industry_key', key)
+        .limit(1)
         .single();
 
       if (stateError && stateError.code === 'PGRST116') {
-        // Initialize if not found
         const { data: newState, error: insertError } = await supabase
-          .from('round_robin_state')
-          .insert([{ industry, zipcode: targetZip, last_agency_index: 0 }])
+          .from(stateTable)
+          .insert([{ industry_key: key, last_agency_index: 0 }])
           .select()
           .single();
         if (insertError) throw insertError;
         state = newState;
       }
 
-      // 5️⃣ Compute next index and update state
-      let nextIndex = 0;
-      if (state && typeof state.last_agency_index === 'number') {
-        nextIndex = (state.last_agency_index + 1) % eligibleAgencies.length;
-      }
+      const currentIndex = state?.last_agency_index || 0;
+      const nextIndex = (currentIndex + 1) % filteredAgencies.length;
+      const selected = filteredAgencies[nextIndex];
 
-      const selected = eligibleAgencies[nextIndex];
-      const { error: updateError } = await supabase
-        .from('round_robin_state')
+      // Update round robin state
+      await supabase
+        .from(stateTable)
         .update({ last_agency_index: nextIndex })
-        .eq('industry', industry)
-        .eq('zipcode', targetZip);
+        .eq('id', state?.id);
 
-      if (updateError) {
-        logger.error(`⚠️ Failed to update round_robin_state for ${industry}-${targetZip}:`, updateError.message);
-      }
-
-      console.log(`🏢 Assigned → ${selected.agency_name} (${selected.id}) [${industry}, ${targetZip}]`);
+      console.log(
+        `🏢 Assigned via Industry Round-Robin → ${selected.agency_name} (${selected.id})`
+      );
       return selected.id;
     } catch (err) {
       logger.error('❌ getNextAgency error:', err.message);
@@ -145,14 +155,14 @@ class LeadIngestionService {
   /** Main lead ingestion workflow */
   async processLead(payload, portal) {
     try {
-      // 1️⃣ Transform and validate
+      // 1️⃣ Transform & validate
       const transformed = this.transformData(payload, portal);
       const validation = this.validate(transformed);
       if (!validation.valid) {
         return { success: false, message: 'Validation failed', errors: validation.errors };
       }
 
-      // 2️⃣ Insert into unified_leads
+      // 2️⃣ Insert lead into unified_leads
       const { data: newLead, error: leadError } = await supabase
         .from('unified_leads')
         .insert([transformed])
@@ -160,10 +170,10 @@ class LeadIngestionService {
         .single();
 
       if (leadError) throw new Error(`Failed to insert lead: ${leadError.message}`);
-      console.log(`✅ Lead stored → ${newLead.lead_id || newLead.id}`);
+      console.log(`✅ Unified lead created: ${newLead.lead_id || newLead.id}`);
 
-      // 3️⃣ Determine next agency (industry + zipcode based)
-      const agencyId = await this.getNextAgency(transformed.industry, transformed.zipcode);
+      // 3️⃣ Find best agency (industry + zipcode)
+      const agencyId = await this.getNextAgency(newLead.industry, newLead.zipcode);
 
       // 4️⃣ Insert into audit_logs
       const auditLog = {
@@ -175,14 +185,14 @@ class LeadIngestionService {
       };
 
       const { error: auditError } = await supabase.from('audit_logs').insert([auditLog]);
-      if (auditError) logger.error('⚠️ Audit log insert failed:', auditError);
-      else console.log(`📝 Audit log recorded for ${newLead.lead_id || newLead.id}`);
+      if (auditError) logger.error('⚠️ Failed to insert audit log:', auditError);
+      else console.log(`📝 Audit log created for ${newLead.lead_id || newLead.id}`);
 
       return {
         success: true,
         message: 'Lead processed successfully',
         lead_id: newLead.lead_id || newLead.id,
-        agency_assigned: agencyId,
+        assigned_agency: agencyId,
       };
     } catch (err) {
       logger.error('💥 processLead error:', err);
