@@ -1,6 +1,6 @@
 /**
  * Lead Ingestion Service
- * Handles transformation, validation, round-robin assignment,
+ * Handles transformation, validation, smart round-robin assignment,
  * and logging of leads from external portals.
  */
 
@@ -11,8 +11,9 @@ class LeadIngestionService {
   /** Transform portal payload to unified_leads schema */
   transformData(payload, portal) {
     const mappedIndustry = payload.industry || portal.industry || 'non_healthcare';
+    const mappedZipcode = payload.zipcode || payload.zip_code || null;
 
-    console.log(`🧩 Industry mapped as → ${mappedIndustry}`);
+    console.log(`🧩 Industry: ${mappedIndustry}, Zipcode: ${mappedZipcode}`);
 
     return {
       portal_id: portal.id,
@@ -26,13 +27,11 @@ class LeadIngestionService {
         'Unknown',
       email: payload.email || payload.email_address || null,
       phone_number:
-        payload.phone ||
-        payload.phone_number ||
-        payload.contact ||
-        null,
+        payload.phone || payload.phone_number || payload.contact || null,
       property_type: payload.propertyType || payload.property_type || null,
       budget_range: payload.budgetRange || payload.budget || null,
       preferred_location: payload.preferredLocation || null,
+      zipcode: mappedZipcode,
       needs: payload.needs || payload.requirements || null,
       additional_details: payload.additionalDetails || null,
       source: portal.portal_name || 'external_portal',
@@ -51,56 +50,91 @@ class LeadIngestionService {
     return { valid: errors.length === 0, errors };
   }
 
-  /** Round-robin agency assignment persisted in DB */
-  async getNextAgency() {
+  /**
+   * Smart Round-Robin Agency Assignment
+   * Matches by Industry + Zipcode, falls back to nearest zipcode if none match.
+   */
+  async getNextAgency(industry, leadZipcode) {
     try {
+      // 1️⃣ Fetch all active agencies in the same industry
       const { data: agencies, error: agencyError } = await supabase
         .from('agencies')
-        .select('id, agency_name')
+        .select('id, agency_name, industry, zipcode, status')
         .eq('status', 'ACTIVE')
-        .order('created_date', { ascending: true });
+        .eq('industry', industry);
 
       if (agencyError) throw agencyError;
       if (!agencies?.length) {
-        logger.warn('⚠️ No active agencies available.');
+        logger.warn(`⚠️ No active agencies for industry: ${industry}`);
         return null;
       }
 
-      // Ensure round_robin_state table exists
+      // 2️⃣ Filter same-zipcode agencies
+      let eligibleAgencies = agencies.filter(a => a.zipcode === leadZipcode);
+
+      // 3️⃣ If no exact zip match, find nearest zipcode numerically
+      if (!eligibleAgencies.length && leadZipcode) {
+        const leadZipNum = Number(leadZipcode);
+        let minDistance = Infinity;
+        let closestZip = null;
+
+        for (const agency of agencies) {
+          if (agency.zipcode) {
+            const diff = Math.abs(Number(agency.zipcode) - leadZipNum);
+            if (diff < minDistance) {
+              minDistance = diff;
+              closestZip = agency.zipcode;
+            }
+          }
+        }
+
+        eligibleAgencies = agencies.filter(a => a.zipcode === closestZip);
+        console.log(`📍 No exact zip match. Using nearest zipcode ${closestZip} for industry ${industry}`);
+      }
+
+      if (!eligibleAgencies.length) {
+        console.warn(`⚠️ No eligible agencies found for industry ${industry}`);
+        return null;
+      }
+
+      // 4️⃣ Fetch or create round-robin state for this (industry + zipcode)
+      const targetZip = eligibleAgencies[0].zipcode || 'unknown';
       let { data: state, error: stateError } = await supabase
         .from('round_robin_state')
         .select('id, last_agency_index')
-        .limit(1)
+        .eq('industry', industry)
+        .eq('zipcode', targetZip)
         .single();
 
       if (stateError && stateError.code === 'PGRST116') {
-        // Table empty, insert default row and fetch it
+        // Initialize if not found
         const { data: newState, error: insertError } = await supabase
           .from('round_robin_state')
-          .insert([{ last_agency_index: 0 }])
+          .insert([{ industry, zipcode: targetZip, last_agency_index: 0 }])
           .select()
           .single();
-
         if (insertError) throw insertError;
         state = newState;
       }
 
+      // 5️⃣ Compute next index and update state
       let nextIndex = 0;
       if (state && typeof state.last_agency_index === 'number') {
-        nextIndex = (state.last_agency_index + 1) % agencies.length;
+        nextIndex = (state.last_agency_index + 1) % eligibleAgencies.length;
       }
 
-      const selected = agencies[nextIndex];
+      const selected = eligibleAgencies[nextIndex];
       const { error: updateError } = await supabase
         .from('round_robin_state')
         .update({ last_agency_index: nextIndex })
-        .eq('id', state?.id || 1);
+        .eq('industry', industry)
+        .eq('zipcode', targetZip);
 
       if (updateError) {
-        logger.error('⚠️ Failed to update round_robin_state:', updateError.message);
+        logger.error(`⚠️ Failed to update round_robin_state for ${industry}-${targetZip}:`, updateError.message);
       }
 
-      console.log(`🏢 Assigned via Round-Robin → ${selected.agency_name} (${selected.id})`);
+      console.log(`🏢 Assigned → ${selected.agency_name} (${selected.id}) [${industry}, ${targetZip}]`);
       return selected.id;
     } catch (err) {
       logger.error('❌ getNextAgency error:', err.message);
@@ -128,8 +162,8 @@ class LeadIngestionService {
       if (leadError) throw new Error(`Failed to insert lead: ${leadError.message}`);
       console.log(`✅ Lead stored → ${newLead.lead_id || newLead.id}`);
 
-      // 3️⃣ Determine next agency
-      const agencyId = await this.getNextAgency();
+      // 3️⃣ Determine next agency (industry + zipcode based)
+      const agencyId = await this.getNextAgency(transformed.industry, transformed.zipcode);
 
       // 4️⃣ Insert into audit_logs
       const auditLog = {
