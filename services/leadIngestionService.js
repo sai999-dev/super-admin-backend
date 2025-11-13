@@ -51,98 +51,97 @@ class LeadIngestionService {
   /**
    * Industry + Zipcode–based Round-robin agency assignment
    */
-  async getNextAgency(leadIndustry, leadZip) {
-    try {
-      console.log(`🔍 Finding agency for industry="${leadIndustry}" and zipcode="${leadZip}"`);
+  /** Round-robin agency assignment with industry + zipcode logic */
+async getNextAgency(leadIndustry, leadZip) {
+  try {
+    console.log(`🔍 Finding agency for industry="${leadIndustry}" and zipcode="${leadZip}"`);
 
-      // 1️⃣ Fetch all active agencies
-      const { data: agencies, error: agencyError } = await supabase
-        .from('agencies')
-        .select('id, agency_name, industry, zipcodes, status')
-        .eq('status', 'ACTIVE');
+    // 1️⃣ Fetch all active agencies
+    const { data: agencies, error: agencyError } = await supabase
+      .from('agencies')
+      .select('id, agency_name, industry, zipcodes, status')
+      .eq('status', 'ACTIVE');
 
-      if (agencyError) throw agencyError;
-      if (!agencies?.length) {
-        logger.warn('⚠️ No active agencies available.');
-        return null;
-      }
-
-      // 2️⃣ Normalize lead industry
-      const safeLeadIndustry = (leadIndustry || '').toLowerCase().trim();
-
-      // 3️⃣ Filter agencies by same industry
-      const sameIndustryAgencies = agencies.filter((a) => {
-        if (!a.industry) return false;
-        return a.industry.toLowerCase().trim() === safeLeadIndustry;
-      });
-
-      console.log(`🧩 Found ${sameIndustryAgencies.length} agencies matching industry "${safeLeadIndustry}"`);
-
-      let filteredAgencies = sameIndustryAgencies.length ? sameIndustryAgencies : agencies;
-
-      // 4️⃣ Try to match by nearest zipcode
-      let selectedAgency = null;
-      if (leadZip && filteredAgencies.length > 0) {
-        let minDistance = Infinity;
-
-        for (const agency of filteredAgencies) {
-          if (!agency.zipcodes) continue;
-
-          const zipList = agency.zipcodes
-            .split(',')
-            .map((z) => z.trim())
-            .filter((z) => z.length > 0);
-
-          for (const z of zipList) {
-            const distance = Math.abs(parseInt(leadZip) - parseInt(z));
-            if (!isNaN(distance) && distance < minDistance) {
-              minDistance = distance;
-              selectedAgency = agency;
-            }
-          }
-        }
-
-        if (selectedAgency) {
-          console.log(
-            `📍 ZIP match → ${selectedAgency.agency_name} (${selectedAgency.id}) [distance=${minDistance}]`
-          );
-          return selectedAgency.id;
-        }
-      }
-
-      // 5️⃣ Fallback to Round-robin (per industry)
-      const key = safeLeadIndustry || 'general';
-      const { data: state, error: stateError } = await supabase
-        .from('round_robin_state')
-        .select('id, last_agency_index, industry_key')
-        .eq('industry_key', key)
-        .maybeSingle();
-
-      let lastIndex = state?.last_agency_index ?? -1;
-      const nextIndex = (lastIndex + 1) % filteredAgencies.length;
-      const selected = filteredAgencies[nextIndex];
-
-      if (state) {
-        await supabase
-          .from('round_robin_state')
-          .update({ last_agency_index: nextIndex })
-          .eq('id', state.id);
-      } else {
-        await supabase
-          .from('round_robin_state')
-          .insert([{ industry_key: key, last_agency_index: nextIndex }]);
-      }
-
-      console.log(
-        `🏢 Round-Robin → Assigned ${selected.agency_name} (${selected.id}) [industry="${key}"]`
-      );
-
-      return selected.id;
-    } catch (err) {
-      logger.error('❌ getNextAgency error:', err.message);
+    if (agencyError) throw agencyError;
+    if (!agencies?.length) {
+      logger.warn('⚠️ No active agencies available.');
       return null;
     }
+
+    const safeLeadIndustry = (leadIndustry || '').toLowerCase().trim();
+
+    // 2️⃣ Filter agencies by industry
+    const industryAgencies = agencies.filter(
+      (a) => a.industry && a.industry.toLowerCase().trim() === safeLeadIndustry
+    );
+
+    const filteredAgencies = industryAgencies.length ? industryAgencies : agencies;
+    console.log(`🧩 Found ${filteredAgencies.length} agencies for "${safeLeadIndustry}"`);
+
+    // 3️⃣ Try to find nearest zipcode match (works for JSON-like arrays too)
+    let selectedAgency = null;
+    if (leadZip) {
+      let minDistance = Infinity;
+      for (const agency of filteredAgencies) {
+        if (!agency.zipcodes) continue;
+
+        let zipList = [];
+        try {
+          // Parse JSON-style text like ["75034","75068"]
+          zipList = JSON.parse(agency.zipcodes);
+        } catch {
+          // Fallback: maybe plain text, split by comma
+          zipList = agency.zipcodes.split(',').map(z => z.replace(/[\[\]"]/g, '').trim());
+        }
+
+        for (const z of zipList) {
+          const distance = Math.abs(parseInt(leadZip) - parseInt(z));
+          if (!isNaN(distance) && distance < minDistance) {
+            minDistance = distance;
+            selectedAgency = agency;
+          }
+        }
+      }
+
+      if (selectedAgency) {
+        console.log(`📍 ZIP match → ${selectedAgency.agency_name} (${selectedAgency.id})`);
+        return selectedAgency.id;
+      }
+    }
+
+    // 4️⃣ If no ZIP match, do round robin by industry
+    const key = safeLeadIndustry || 'general';
+    let { data: state, error: stateError } = await supabase
+      .from('round_robin_state')
+      .select('id, last_agency_index, industry_key')
+      .eq('industry_key', key)
+      .maybeSingle();
+
+    if (stateError) throw stateError;
+
+    let lastIndex = state?.last_agency_index ?? -1;
+    const nextIndex = (lastIndex + 1) % filteredAgencies.length;
+    const selected = filteredAgencies[nextIndex];
+
+    if (state) {
+      await supabase
+        .from('round_robin_state')
+        .update({ last_agency_index: nextIndex })
+        .eq('id', state.id);
+    } else {
+      await supabase
+        .from('round_robin_state')
+        .insert([{ industry_key: key, last_agency_index: nextIndex }]);
+    }
+
+    console.log(`🏢 Round Robin → Assigned ${selected.agency_name} (${selected.id})`);
+    return selected.id;
+  } catch (err) {
+    logger.error('❌ getNextAgency error:', err.message);
+    return null;
   }
+}
+
 
   /** Main lead ingestion workflow */
   async processLead(payload, portal) {
