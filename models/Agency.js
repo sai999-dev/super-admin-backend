@@ -133,12 +133,30 @@ module.exports = (sequelize, DataTypes) => {
       field: 'primary_states',
       comment: 'Array of active state values for fast lookup'
     },
-    territoriesUpdatedAt: {
+        territoriesUpdatedAt: {
       type: DataTypes.DATE,
       allowNull: true,
       field: 'territories_updated_at'
+    },
+
+    // ✅ Added fields for password reset
+    resetCode: {
+      type: DataTypes.STRING(10),
+      allowNull: true,
+      field: 'reset_code'
+    },
+    resetCodeExpires: {
+      type: DataTypes.DATE,
+      allowNull: true,
+      field: 'reset_code_expires'
+    },
+    resetVerified: {
+      type: DataTypes.BOOLEAN,
+      defaultValue: false,
+      field: 'reset_verified'
     }
-  }, {
+  },
+  {
     tableName: 'agencies',
     timestamps: true,
     createdAt: 'created_at',

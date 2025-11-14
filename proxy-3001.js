@@ -13,7 +13,7 @@ const proxy = httpProxy.createProxyServer({
 });
 
 const server = http.createServer((req, res) => {
-  // Add CORS headers
+  // Add CORS headers - allow all origins for Flutter frontend compatibility
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS, PATCH');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept, Origin');
@@ -41,5 +41,6 @@ proxy.on('error', (err, req, res) => {
 server.listen(3001, () => {
   console.log('🔄 Proxy server running on port 3001');
   console.log('   Forwarding all requests to http://localhost:3000');
+  console.log('✅ CORS enabled for health-check/proxy server');
 });
 

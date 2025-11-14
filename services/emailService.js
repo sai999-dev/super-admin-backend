@@ -44,11 +44,12 @@ class EmailService {
   initNodemailer() {
     try {
       if (!process.env.SMTP_HOST || !process.env.SMTP_USER || !process.env.SMTP_PASS) {
+        logger.warn('⚠️ SMTP not configured correctly — emails will not be sent.');
         return null;
       }
-
+  
       const nodemailer = require('nodemailer');
-      return nodemailer.createTransport({
+      const transporter = nodemailer.createTransport({
         host: process.env.SMTP_HOST,
         port: parseInt(process.env.SMTP_PORT || '587'),
         secure: process.env.SMTP_SECURE === 'true',
@@ -57,12 +58,17 @@ class EmailService {
           pass: process.env.SMTP_PASS
         }
       });
+  
+      // ✅ Verify SMTP connection on startup
+      transporter.verify()
+        .then(() => logger.info('✅ SMTP connection verified (Nodemailer ready)'))
+      return transporter;
     } catch (error) {
       logger.error('Error initializing Nodemailer:', error);
       return null;
     }
   }
-
+  
   /**
    * Initialize SendGrid
    * @private

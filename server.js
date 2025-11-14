@@ -3,13 +3,24 @@
  * Fixed version with proper error handling
  */
 
+// ✅ Load environment variables FIRST - before any other requires
+require('dotenv').config({ path: require('path').join(__dirname, 'config.env') });
+require('dotenv').config({ path: require('path').join(__dirname, '..', 'config.env') });
+require('dotenv').config(); // Also try default .env location
+
+// 🧩 Debug: Log critical environment variables at startup
+console.log('🧩 ENV CHECK → DB_HOST:', process.env.DB_HOST || 'NOT SET');
+console.log('🧩 ENV CHECK → DB_NAME:', process.env.DB_NAME || 'NOT SET');
+console.log('🧩 ENV CHECK → DB_USERNAME:', process.env.DB_USERNAME || 'NOT SET');
+console.log('🧩 ENV CHECK → DB_PASSWORD:', process.env.DB_PASSWORD ? '***SET***' : 'NOT SET');
+console.log('🧩 ENV CHECK → PORT:', process.env.PORT || 'NOT SET (using default)');
+
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
 const morgan = require('morgan');
 const compression = require('compression');
 const rateLimit = require('express-rate-limit');
-const dotenv = require('dotenv');
 const { createClient } = require('@supabase/supabase-js');
 const { Client } = require('pg');
 const crypto = require('crypto');
@@ -19,14 +30,17 @@ const { performanceMonitor, errorTracker, getHealthData } = require('./middlewar
 
 // Import services for webhook processing (moved to webhook handler to avoid circular dependencies)
 
-// Load environment variables from config.env (try multiple locations)
-dotenv.config({ path: path.join(__dirname, 'config.env') });
-dotenv.config({ path: path.join(__dirname, '..', 'config.env') });
-dotenv.config(); // Also try default .env location
-
 const app = express();
 const PORT = process.env.PORT || 3000;
 const NODE_ENV = process.env.NODE_ENV || 'development';
+
+// ✅ CORS Configuration - Allow all origins for Flutter frontend compatibility
+app.use(cors({
+  origin: '*', // allow all origins for now; later restrict if needed
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin', 'x-api-key']
+}));
+console.log('✅ CORS enabled for all origins');
 
 console.log('🚀 Starting Lead Marketplace Unified Server...');
 console.log(`📝 Environment: ${NODE_ENV}`);
@@ -54,49 +68,8 @@ app.use((req, res, next) => {
 // ==========================================================
 // 🌐 General CORS Configuration (for all API routes)
 // ==========================================================
-// CORS Configuration - Allow all localhost origins for Flutter web development
-app.use(cors({
-  origin: function (origin, callback) {
-    // Allow requests with no origin (mobile apps, Postman, curl, etc.)
-    if (!origin) {
-      return callback(null, true);
-    }
-    
-    // Allow all localhost origins with any port (Flutter web uses random ports)
-    if (origin.match(/^https?:\/\/localhost(:\d+)?$/)) {
-      return callback(null, true);
-    }
-    
-    // Allow all 127.0.0.1 origins with any port
-    if (origin.match(/^https?:\/\/127\.0\.0\.1(:\d+)?$/)) {
-      return callback(null, true);
-    }
-    
-    // In development, allow all origins
-    if (NODE_ENV === 'development') {
-      return callback(null, true);
-    }
-    
-    // In production, only allow specific origins
-    const allowedOrigins = [
-      'https://super-admin-backend-2sy0.onrender.com',
-      process.env.FRONTEND_URL,
-      process.env.BASE_URL
-    ].filter(Boolean);
-    
-    if (allowedOrigins.includes(origin)) {
-      return callback(null, true);
-    }
-    
-    // Reject unknown origins in production
-    callback(new Error('Not allowed by CORS'));
-  },
-  credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin', 'x-api-key'],
-  exposedHeaders: ['Content-Type', 'Authorization'],
-  maxAge: 86400 // 24 hours
-}));
+// NOTE: CORS is already configured above (line 32-37) to allow all origins
+// The simple configuration above handles all CORS requirements
 
 
 
@@ -179,71 +152,8 @@ app.use((req, res, next) => {
   next();
 });
 
-app.use(cors({
-  origin: function (origin, callback) {
-    // Allow requests with no origin (like mobile apps or curl requests)
-    if (!origin) return callback(null, true);
-    
-    // Build allowed origins list from environment variables
-    const allowedOrigins = [];
-    
-    // Add FRONTEND_URL if provided
-    if (process.env.FRONTEND_URL) {
-      allowedOrigins.push(process.env.FRONTEND_URL);
-    }
-    
-    // Add BASE_URL if provided (and different from FRONTEND_URL)
-    if (process.env.BASE_URL && process.env.BASE_URL !== process.env.FRONTEND_URL) {
-      allowedOrigins.push(process.env.BASE_URL);
-    }
-    
-    // Add ALLOWED_ORIGINS if provided (comma-separated list)
-    if (process.env.ALLOWED_ORIGINS) {
-      const origins = process.env.ALLOWED_ORIGINS.split(',').map(url => url.trim());
-      allowedOrigins.push(...origins);
-    }
-    
-    // In development, allow localhost on any port
-    if (NODE_ENV === 'development') {
-      // Allow localhost on any port (including 8080)
-      if (origin.match(/^https?:\/\/localhost(:\d+)?$/)) {
-        return callback(null, true);
-      }
-      if (origin.match(/^https?:\/\/127\.0\.0\.1(:\d+)?$/)) {
-        return callback(null, true);
-      }
-      // Explicitly allow common development ports
-      if (origin === 'http://localhost:8080' || origin === 'http://localhost:3002' || origin === 'http://localhost:3000') {
-        return callback(null, true);
-      }
-    }
-    
-    if (allowedOrigins.includes(origin)) {
-      return callback(null, true);
-    }
-    
-    callback(new Error('Not allowed by CORS'));
-  },
-  credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
-  allowedHeaders: [
-    'Content-Type', 
-    'Authorization', 
-    'X-Requested-With', 
-    'Accept', 
-    'Origin',
-    'X-API-Key',
-    'x-api-key',
-    'X-Api-Key',
-    'x-apikey'
-  ],
-  exposedHeaders: ['Content-Length', 'X-Foo', 'X-Bar'],
-  optionsSuccessStatus: 200, // some legacy browsers (IE11, various SmartTVs) choke on 204
-  preflightContinue: false // Don't continue to next middleware after handling OPTIONS
-}));
-
-// OPTIONS requests are already handled by the middleware above (before CORS)
-// CORS is already configured above - this duplicate middleware removed
+// NOTE: CORS is already configured at the top (line 32-37) to allow all origins
+// This duplicate configuration has been removed to avoid conflicts
 
 // Handle preflight OPTIONS requests for non-webhook routes (Express 5.x compatible)
 app.use((req, res, next) => {
@@ -295,6 +205,7 @@ app.use(performanceMonitor);
 
 // Trust proxy (for rate limiting behind reverse proxy)
 app.set('trust proxy', 1);
+
 
 // =====================================================
 // DATABASE CONNECTIONS
@@ -522,6 +433,7 @@ app.get('/api/proxy', async (req, res) => {
     }
     
     console.log(`✅ Proxy request for allowed host: ${urlObj.hostname}`);
+    console.log(`📤 Fetching URL: ${url}`);
 
     // Get custom headers from query params (for API keys, etc.)
     const headers = {
@@ -545,26 +457,119 @@ app.get('/api/proxy', async (req, res) => {
       headers['X-API-Key'] = req.query.apiKey;
     }
 
-    // Fetch the external resource using built-in fetch (Node.js 18+)
-    const response = await fetch(url, {
-      headers: headers
-    });
+    console.log(`📋 Request headers:`, headers);
 
-    // Get response text first
-    const data = await response.text();
-    const contentType = response.headers.get('content-type') || '';
+    // Fetch the external resource using built-in fetch (Node.js 18+)
+    // If fetch is not available, use https module as fallback
+    let response;
+    let responseData;
+    let responseContentType;
+    
+    try {
+      // Check if fetch is available (Node.js 18+)
+      if (typeof fetch === 'undefined') {
+        // Fallback to https module for older Node.js versions
+        const https = require('https');
+        const http = require('http');
+        const urlModule = require('url');
+        
+        const parsedUrl = urlModule.parse(url);
+        const client = parsedUrl.protocol === 'https:' ? https : http;
+        
+        const options = {
+          hostname: parsedUrl.hostname,
+          port: parsedUrl.port || (parsedUrl.protocol === 'https:' ? 443 : 80),
+          path: parsedUrl.path,
+          method: 'GET',
+          headers: headers
+        };
+        
+        // Use Promise to handle the request
+        responseData = await new Promise((resolve, reject) => {
+          const req = client.request(options, (httpRes) => {
+            responseContentType = httpRes.headers['content-type'] || '';
+            let data = '';
+            
+            httpRes.on('data', (chunk) => { data += chunk; });
+            httpRes.on('end', () => {
+              if (!httpRes.statusCode || httpRes.statusCode >= 400) {
+                reject(new Error(`HTTP ${httpRes.statusCode}: ${httpRes.statusMessage || 'Request failed'}`));
+              } else {
+                resolve(data);
+              }
+            });
+          });
+          
+          req.on('error', (err) => {
+            console.error('❌ HTTP request error:', err);
+            reject(new Error(`Failed to fetch ${url}: ${err.message}`));
+          });
+          
+          req.setTimeout(30000, () => {
+            req.destroy();
+            reject(new Error(`Request timeout for ${url}`));
+          });
+          
+          req.end();
+        });
+        
+        // Parse JSON if content type indicates JSON
+        let parsedData;
+        if (responseContentType.includes('application/json')) {
+          try {
+            parsedData = JSON.parse(responseData);
+          } catch (e) {
+            parsedData = responseData;
+          }
+        } else {
+          // Try to parse as JSON anyway
+          try {
+            parsedData = JSON.parse(responseData);
+          } catch (e) {
+            parsedData = responseData;
+          }
+        }
+        
+        return res.json({
+          success: true,
+          data: parsedData,
+          contentType: responseContentType
+        });
+      }
+      
+      // Use built-in fetch (Node.js 18+)
+      response = await fetch(url, {
+        headers: headers,
+        method: 'GET'
+      });
+      console.log(`✅ Fetch successful, status: ${response.status}`);
+      
+      // Get response text
+      responseData = await response.text();
+      responseContentType = response.headers.get('content-type') || '';
+      
+    } catch (fetchError) {
+      console.error('❌ Fetch error details:', {
+        message: fetchError.message,
+        code: fetchError.code,
+        errno: fetchError.errno,
+        syscall: fetchError.syscall,
+        stack: fetchError.stack
+      });
+      throw new Error(`Failed to fetch ${url}: ${fetchError.message}`);
+    }
 
     // If the external API returned an error, pass it through with proper status
     if (!response.ok) {
       // Try to parse error message from response
       let errorMessage = `HTTP ${response.status}: ${response.statusText}`;
       try {
-        const errorData = JSON.parse(data);
+        const errorData = JSON.parse(responseData);
         errorMessage = errorData.message || errorData.error || errorMessage;
       } catch (e) {
         // If not JSON, use the text or default message
-        if (data && data.length < 500) {
-          errorMessage = data;
+        if (responseData && responseData.length < 500) {
+          errorMessage = responseData;
         }
       }
 
@@ -578,9 +583,9 @@ app.get('/api/proxy', async (req, res) => {
 
     // Parse JSON if content type indicates JSON, otherwise return as text
     let parsedData;
-    if (contentType.includes('application/json') || contentType.includes('application/schema+json')) {
+    if (responseContentType.includes('application/json') || responseContentType.includes('application/schema+json')) {
       try {
-        parsedData = JSON.parse(data);
+        parsedData = JSON.parse(responseData);
         console.log(`✅ Parsed JSON response, type: ${typeof parsedData}, isArray: ${Array.isArray(parsedData)}`);
         if (parsedData && typeof parsedData === 'object') {
           console.log(`✅ Response has properties: ${!!parsedData.properties}, properties count: ${parsedData.properties ? Object.keys(parsedData.properties).length : 0}`);
@@ -588,29 +593,36 @@ app.get('/api/proxy', async (req, res) => {
       } catch (e) {
         console.warn('⚠️ JSON parsing failed, returning as text:', e.message);
         // If JSON parsing fails, return as text
-        parsedData = data;
+        parsedData = responseData;
       }
     } else {
       // Try to parse as JSON anyway (some APIs don't set content-type correctly)
       try {
-        parsedData = JSON.parse(data);
-        console.log(`✅ Parsed JSON despite content-type (${contentType})`);
+        parsedData = JSON.parse(responseData);
+        console.log(`✅ Parsed JSON despite content-type (${responseContentType})`);
       } catch (e) {
-        parsedData = data;
+        parsedData = responseData;
       }
     }
     
     res.json({
       success: true,
       data: parsedData,
-      contentType: contentType
+      contentType: responseContentType
     });
 
   } catch (error) {
     console.error('❌ Proxy error:', error);
+    console.error('❌ Error details:', {
+      message: error.message,
+      code: error.code,
+      name: error.name,
+      stack: error.stack
+    });
     res.status(500).json({
       success: false,
-      message: error.message || 'Failed to fetch external resource'
+      message: error.message || 'Failed to fetch external resource',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
 });
@@ -2058,7 +2070,38 @@ app.get('/api/admin/leads/stats', async (req, res) => {
 });
 
 // =====================================================
-// STATIC FILE SERVING
+// STATIC FILE SERVING - UPLOADS (MUST BE FIRST)
+// =====================================================
+
+// Serve uploaded files publicly
+// IMPORTANT: This MUST be registered BEFORE frontend static serving
+// to prevent frontend static middleware from intercepting /uploads requests
+const uploadsPath = path.join(__dirname, 'uploads');
+app.use('/uploads', express.static(uploadsPath, {
+  dotfiles: 'ignore',
+  etag: true,
+  index: false,
+  maxAge: '1d'
+}));
+console.log("📁 Serving static files from:", uploadsPath);
+console.log("📁 Full absolute path:", path.resolve(uploadsPath));
+
+// Debug: Test if a file exists
+const testFilePath = path.join(uploadsPath, 'documents', '1763096908546-380972941.jpg');
+if (fs.existsSync(testFilePath)) {
+  console.log("✅ Test file exists:", testFilePath);
+} else {
+  console.log("⚠️ Test file NOT found:", testFilePath);
+  // List files in documents directory
+  const documentsDir = path.join(uploadsPath, 'documents');
+  if (fs.existsSync(documentsDir)) {
+    const files = fs.readdirSync(documentsDir);
+    console.log("📄 Files in documents directory:", files.slice(0, 5));
+  }
+}
+
+// =====================================================
+// STATIC FILE SERVING - FRONTEND
 // =====================================================
 
 // Check if frontend directory exists
@@ -2128,6 +2171,7 @@ app.get('/', (req, res) => {
 
 // Import mobile auth routes (public - registration/login)
 const mobileAuthRoutes = require('./routes/mobileAuthRoutes');
+const agencyDocumentsRoutes = require('./routes/agencyDocumentsRoutes');
 
 // Import mobile routes
 const mobileRoutes = require('./routes/mobileRoutes');
@@ -2151,12 +2195,19 @@ const adminRolesRoutes = require('./routes/adminRolesRoutes');
 const adminEnhancedSubscriptionsRoutes = require('./routes/adminEnhancedSubscriptionsRoutes');
 const adminLeadsRoutes = require('./routes/adminLeadsRoutes');
 const adminDocumentVerificationRoutes = require('./routes/adminDocumentVerificationRoutes');
+const adminDocumentsRoutes = require('./routes/adminDocumentsRoutes');
+const adminAgencyRoutes = require('./routes/adminAgencyRoutes');
 const adminPortalsRoutes = require('./routes/adminPortalsRoutes');
 const adminWebhooksRoutes = require('./routes/adminWebhooksRoutes');
 const leadDistributionRoutes = require('./routes/leadDistributionRoutes');
 
 // Apply mobile auth routes (PUBLIC - no authentication required)
 app.use('/api/v1/agencies', mobileAuthRoutes);
+// Agency document upload routes
+app.use('/api/v1/agencies', agencyDocumentsRoutes);
+// Password Reset Routes (Forgot Password, Verify Code, Reset Password)
+const passwordResetRoutes = require('./routes/passwordResetRoutes');
+app.use('/api/mobile/auth', passwordResetRoutes);
 
 // Apply mobile routes
 app.use('/api/mobile', mobileRoutes);
@@ -2184,6 +2235,8 @@ app.use('/api/admin', adminSystemRoutes);
 app.use('/api/admin', adminRolesRoutes);
 app.use('/api/admin', adminLeadsRoutes);
 app.use('/api/admin', adminDocumentVerificationRoutes);
+app.use('/api/admin', adminDocumentsRoutes);
+app.use('/api/admin', adminAgencyRoutes);
 // Register admin portals routes BEFORE other admin routes to ensure proper matching
 app.use('/api/admin', adminPortalsRoutes);
 app.use('/api/admin', adminWebhooksRoutes);
@@ -2194,6 +2247,7 @@ const metricsRoutes = require('./routes/metricsRoutes');
 app.use('/api', metricsRoutes);
 
 // 404 handler for API routes (Express 5.x compatible)
+// IMPORTANT: This must come AFTER static file serving
 app.use((req, res, next) => {
   if (req.path.startsWith('/api/')) {
     return res.status(404).json({
@@ -2208,7 +2262,11 @@ app.use((req, res, next) => {
 
 // Catch-all handler for client-side routing (SPA) - Express 5.x compatible
 app.use((req, res, next) => {
-  // Only handle GET requests that aren't API routes
+  // Skip static file requests (uploads) and API routes
+  if (req.path.startsWith('/uploads') || req.path.startsWith('/api')) {
+    return next();
+  }
+  // Only handle GET requests that aren't API routes or static files
   if (req.method === 'GET' && !req.path.startsWith('/api')) {
     const indexPath = path.join(__dirname, '..', 'frontend', 'index.html');
     if (frontendExists && fs.existsSync(indexPath)) {
@@ -2265,6 +2323,7 @@ async function startServer() {
     // Start server on primary port
     const server = app.listen(PORT, () => {
       console.log('\n🚀 Lead Marketplace Unified Server running!');
+      console.log(`✅ Server running on port ${PORT}`);
       console.log(`🌐 Frontend: http://localhost:${PORT}`);
       console.log(`🔗 Health check: http://localhost:${PORT}/api/health`);
       console.log(`📚 API Documentation: http://localhost:${PORT}/api`);
@@ -2280,30 +2339,19 @@ async function startServer() {
       console.log('\n✨ Unified Admin Portal with Supabase database!');
     });
     
-    // Also listen on ports 3000 and 3001 for Flutter web compatibility
-    if (PORT === 3002) {
-      const http = require('http');
-      
-      // Port 3000
+    // Also listen on ports 3000, 3001, and 3002 for frontend compatibility
+    const http = require('http');
+    const additionalPorts = [3000, 3001, 3002].filter(p => p !== PORT);
+    
+    for (const port of additionalPorts) {
       try {
-        const server3000 = http.createServer(app);
-        server3000.listen(3000, '0.0.0.0', () => {
-          console.log(`🌐 Also listening on port 3000: http://localhost:3000`);
+        const additionalServer = http.createServer(app);
+        additionalServer.listen(port, '0.0.0.0', () => {
+          console.log(`🌐 Also listening on port ${port}: http://localhost:${port}`);
         });
-        server3000.timeout = 30000;
+        additionalServer.timeout = 30000;
       } catch (err) {
-        console.warn('⚠️ Could not start server on port 3000:', err.message);
-      }
-      
-      // Port 3001 (Flutter tries this first)
-      try {
-        const server3001 = http.createServer(app);
-        server3001.listen(3001, '0.0.0.0', () => {
-          console.log(`🌐 Also listening on port 3001: http://localhost:3001`);
-        });
-        server3001.timeout = 30000;
-      } catch (err) {
-        console.warn('⚠️ Could not start server on port 3001:', err.message);
+        console.warn(`⚠️ Could not start server on port ${port}:`, err.message);
       }
     }
     
@@ -2334,9 +2382,24 @@ async function startServer() {
   }
 }
 
+// Handle unhandled promise rejections
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('❌ Unhandled Rejection at:', promise, 'reason:', reason);
+  // Don't exit the process, just log the error
+});
+
+// Handle uncaught exceptions
+process.on('uncaughtException', (error) => {
+  console.error('❌ Uncaught Exception:', error);
+  // Don't exit immediately, let the server try to handle it
+});
+
 // Start the server
 if (require.main === module) {
-  startServer();
+  startServer().catch((error) => {
+    console.error('❌ Failed to start server:', error);
+    process.exit(1);
+  });
 }
 
 module.exports = app;

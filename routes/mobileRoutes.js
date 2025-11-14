@@ -1010,29 +1010,104 @@ router.post('/auth/verify-reset-code', async (req, res) => {
       });
     }
 
-    // Find code record
-    const { data: codeRecord, error: codeError } = await supabase
+    // Find code record - try password_reset_codes table first
+    console.log('🔍 Searching for code:', {
+      email: normalizedEmail,
+      code: trimmedCode,
+      codeType: typeof trimmedCode
+    });
+    
+    let codeRecord = null;
+    let codeError = null;
+    
+    // Try password_reset_codes table first
+    const { data: codeRecordFromTable, error: codeErrorFromTable } = await supabase
       .from('password_reset_codes')
       .select('*')
       .eq('email', normalizedEmail)
-      .eq('code', trimmedCode)
       .eq('used', false)
       .order('created_at', { ascending: false })
-      .limit(1)
-      .maybeSingle();
+      .limit(10); // Get multiple to check all codes
 
-    if (codeError) {
-      console.error('❌ Database error:', codeError.message);
-      return res.status(500).json({
-        success: false,
-        message: 'Database error during code verification',
-        error: process.env.NODE_ENV === 'development' ? codeError.message : undefined
-      });
+    if (codeErrorFromTable) {
+      console.error('❌ Database error querying password_reset_codes:', codeErrorFromTable);
+      console.error('❌ Error details:', codeErrorFromTable);
+    } else {
+      console.log('📋 Found codes in password_reset_codes:', codeRecordFromTable?.length || 0);
+      
+      // Manually filter by code (handles string/number mismatch)
+      if (codeRecordFromTable && codeRecordFromTable.length > 0) {
+        codeRecord = codeRecordFromTable.find(record => {
+          const storedCode = String(record.code || '').trim();
+          const receivedCode = String(trimmedCode || '').trim();
+          console.log('🔍 Comparing:', { stored: storedCode, received: receivedCode, match: storedCode === receivedCode });
+          return storedCode === receivedCode;
+        });
+      }
     }
+
+    // If not found in password_reset_codes, try agencies table as fallback
+    if (!codeRecord) {
+      console.log('⚠️ Code not found in password_reset_codes, checking agencies table...');
+      
+      const { data: agency, error: agencyError } = await supabase
+        .from('agencies')
+        .select('id, email, reset_code, reset_code_expires, reset_verified')
+        .eq('email', normalizedEmail)
+        .maybeSingle();
+
+      if (!agencyError && agency) {
+        const storedCode = String(agency.reset_code || '').trim();
+        const receivedCode = String(trimmedCode || '').trim();
+        
+        console.log('🔍 Checking agencies table:', {
+          stored: storedCode,
+          received: receivedCode,
+          match: storedCode === receivedCode,
+          expires: agency.reset_code_expires
+        });
+
+        if (storedCode && storedCode === receivedCode) {
+          // Convert agency record to codeRecord format
+          codeRecord = {
+            id: agency.id,
+            email: agency.email,
+            code: agency.reset_code,
+            expires_at: agency.reset_code_expires,
+            used: agency.reset_verified === true,
+            created_at: agency.updated_at || new Date().toISOString()
+          };
+          console.log('✅ Found code in agencies table!');
+        }
+      }
+    }
+
+    // Debug: show what was found
+    console.log('💾 Final code record:', codeRecord ? {
+      id: codeRecord.id,
+      email: codeRecord.email,
+      code: codeRecord.code,
+      codeType: typeof codeRecord.code,
+      expires_at: codeRecord.expires_at,
+      used: codeRecord.used,
+      created_at: codeRecord.created_at
+    } : 'No record found');
 
     // Check if code exists
     if (!codeRecord) {
       console.warn('❌ Invalid code for:', normalizedEmail);
+      console.warn('   Searched for code:', trimmedCode, '(type:', typeof trimmedCode + ')');
+      
+      // Show all available codes for debugging
+      if (codeRecordFromTable && codeRecordFromTable.length > 0) {
+        console.warn('   Available codes in password_reset_codes:', codeRecordFromTable.map(c => ({
+          code: c.code,
+          codeType: typeof c.code,
+          expires: c.expires_at,
+          used: c.used
+        })));
+      }
+      
       return res.status(400).json({
         success: false,
         message: 'Invalid or expired verification code'
