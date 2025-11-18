@@ -711,7 +711,12 @@ router.post('/login', async (req, res) => {
       .eq('is_active', true);
 
   // Generate JWT token
-    const token = generateToken(normalizedAgency.id, normalizedAgency.email, normalizedAgency.business_name);
+   const token = generateAgencyToken({
+  id: normalizedAgency.id,
+  email: normalizedAgency.email,
+  businessName: normalizedAgency.business_name
+});
+
 
     res.json({
       success: true,
@@ -830,7 +835,12 @@ router.post('/verify-email', async (req, res) => {
     if (updateError) throw updateError;
 
     // Generate JWT token
-    const token = generateToken(normalizedAgency.id, normalizedAgency.email, normalizedAgency.business_name);
+   const token = generateAgencyToken({
+  id: normalizedAgency.id,
+  email: normalizedAgency.email,
+  businessName: normalizedAgency.business_name
+});
+
 
     res.json({
       success: true,
