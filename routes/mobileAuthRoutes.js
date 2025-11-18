@@ -4,6 +4,9 @@
  * These endpoints do NOT require authentication
  */
 
+
+
+
 const express = require('express');
 const router = express.Router();
 const bcrypt = require('bcryptjs');
@@ -708,7 +711,12 @@ router.post('/login', async (req, res) => {
       .eq('is_active', true);
 
   // Generate JWT token
-    const token = generateToken(normalizedAgency.id, normalizedAgency.email, normalizedAgency.business_name);
+   const token = generateAgencyToken({
+  id: normalizedAgency.id,
+  email: normalizedAgency.email,
+  businessName: normalizedAgency.business_name
+});
+
 
     res.json({
       success: true,
@@ -827,7 +835,12 @@ router.post('/verify-email', async (req, res) => {
     if (updateError) throw updateError;
 
     // Generate JWT token
-    const token = generateToken(normalizedAgency.id, normalizedAgency.email, normalizedAgency.business_name);
+   const token = generateAgencyToken({
+  id: normalizedAgency.id,
+  email: normalizedAgency.email,
+  businessName: normalizedAgency.business_name
+});
+
 
     res.json({
       success: true,
@@ -1038,5 +1051,56 @@ router.put('/profile', authenticateAgency, async (req, res) => {
     res.status(500).json({ success: false, message: 'Failed to update profile', error: error.message });
   }
 });
+
+
+/**
+ * POST /api/v1/agencies/update-fcm
+ * Save or update device FCM token for this agency
+ */
+router.post('/update-fcm', authenticateAgency, async (req, res) => {
+  try {
+    const agencyId = req.agency.id;
+    const { fcm_token } = req.body;
+
+    if (!fcm_token) {
+      return res.status(400).json({
+        success: false,
+        message: "fcm_token is required"
+      });
+    }
+
+    console.log("📌 Updating FCM for agency:", agencyId, "Token:", fcm_token);
+
+    const { error } = await supabase
+      .from('agencies')
+      .update({
+        fcm_token: fcm_token,
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', agencyId);
+
+    if (error) {
+      console.error("❌ Failed to update FCM:", error.message);
+      return res.status(500).json({
+        success: false,
+        message: "Failed to update FCM token",
+        error: error.message
+      });
+    }
+
+    return res.json({
+      success: true,
+      message: "FCM token updated successfully"
+    });
+
+  } catch (error) {
+    console.error("❌ Error updating FCM token:", error);
+    res.status(500).json({
+      success: false,
+      message: "Server error updating FCM token"
+    });
+  }
+});
+
 
 module.exports = router;

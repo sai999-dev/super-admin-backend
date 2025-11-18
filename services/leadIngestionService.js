@@ -5,6 +5,8 @@
 
 const supabase = require('../config/supabaseClient');
 const logger = require('../utils/logger');
+const sendLeadNotification = require("../services/sendLeadNotification");
+
 
 class LeadIngestionService {
   /** Transform portal payload → unified_leads schema */
@@ -207,6 +209,12 @@ class LeadIngestionService {
       const { error: auditError } = await supabase.from('audit_logs').insert([auditLog]);
       if (auditError) logger.error('⚠️ Audit log insert failed:', auditError.message);
       else console.log(`📝 Audit log saved for ${newLead.lead_id}`);
+
+      // 5️⃣ Send notification to agency
+      if (agencyId) {
+  await sendLeadNotification(agencyId, newLead.lead_name);
+}
+
 
       return {
         success: true,

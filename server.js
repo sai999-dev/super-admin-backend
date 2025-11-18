@@ -34,6 +34,13 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 const NODE_ENV = process.env.NODE_ENV || 'development';
 
+app.use('/api/mobile/messaging', require('./controllers/mobileMessagingController'));
+
+
+app.use("/api/mobile", require("./routes/mobileNotificationsRoutes"));
+
+
+
 // ✅ CORS Configuration - Allow all origins for Flutter frontend compatibility
 app.use(cors({
   origin: '*', // allow all origins for now; later restrict if needed
