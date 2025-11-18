@@ -3,6 +3,16 @@ const { Client } = require('pg');
 const router = express.Router();
 const { authenticateAdmin } = require('../middleware/adminAuth');
 
+// ===============================
+// Multer Memory Storage for Supabase Upload
+// ===============================
+const multer = require('multer');
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024 } // 10MB
+});
+
+
 // ✅ Use Supabase as fallback if PostgreSQL connection fails
 const supabase = require('../config/supabaseClient');
 let pgClient = null;
@@ -55,7 +65,7 @@ router.get('/agencies/:agencyId/documents', authenticateAdmin, async (req, res) 
       console.log('💾 Using Supabase for admin document fetch...');
       const { data, error } = await supabase
         .from('agency_documents')
-        .select('id, agency_id, document_type, file_name, file_path, mime_type, size_bytes, description, status, uploaded_at, reviewed_at, reviewed_by')
+        .select('id, agency_id, document_type, file_name, file_path, file_url, mime_type, size_bytes, description, status, uploaded_at, reviewed_at, reviewed_by')
         .eq('agency_id', agencyId)
         .order('uploaded_at', { ascending: false });
 
@@ -70,6 +80,7 @@ router.get('/agencies/:agencyId/documents', authenticateAdmin, async (req, res) 
         document_type: doc.document_type,
         file_name: doc.file_name,
         file_path: doc.file_path,
+        file_url: doc.file_url || null,
         mime_type: doc.mime_type,
         size_bytes: doc.size_bytes,
         description: doc.description || '',
@@ -81,7 +92,7 @@ router.get('/agencies/:agencyId/documents', authenticateAdmin, async (req, res) 
     } else {
       // Use PostgreSQL - use uploaded_at column (not created_at)
       const result = await pgClient.query(
-        `SELECT id, agency_id, document_type, file_name, file_path,
+        `SELECT id, agency_id, document_type, file_name, file_path, file_url,
                 mime_type, size_bytes, description, status,
                 uploaded_at, reviewed_at, reviewed_by
          FROM agency_documents
@@ -96,6 +107,7 @@ router.get('/agencies/:agencyId/documents', authenticateAdmin, async (req, res) 
         document_type: row.document_type,
         file_name: row.file_name,
         file_path: row.file_path,
+        file_url: row.file_url || null,
         mime_type: row.mime_type,
         size_bytes: row.size_bytes,
         description: row.description || '',
@@ -170,6 +182,107 @@ router.patch('/agencies/:agencyId/documents/:docId/verify', authenticateAdmin, a
     console.error('❌ Verify error:', err);
     console.error('❌ Error stack:', err.stack);
     res.status(500).json({ success: false, message: err.message || 'Failed to verify document' });
+  }
+});
+
+/**
+ * POST /api/admin/agencies/:agencyId/documents
+ * Upload a document → Supabase → Save to agency_documents
+ */
+const { uploadAgencyDocument } = require('../controllers/agencyDocumentsController');
+
+router.post(
+  '/agencies/:agencyId/documents',
+  authenticateAdmin,
+  upload.single('document'),
+  uploadAgencyDocument
+);
+
+/**
+ * GET /api/admin/documents/:docId/url
+ * Refresh signed URL for a document
+ */
+router.get('/documents/:docId/url', authenticateAdmin, async (req, res) => {
+  try {
+    const { docId } = req.params;
+
+    // Fetch document metadata to get file_path
+    const { data: doc, error: fetchErr } = await supabase
+      .from('agency_documents')
+      .select('file_path, file_url')
+      .eq('id', docId)
+      .single();
+
+    if (fetchErr || !doc) {
+      return res.status(404).json({ success: false, message: 'Document not found' });
+    }
+
+    // If file_url exists, return it (public URL)
+    if (doc.file_url) {
+      return res.json({ success: true, url: doc.file_url });
+    }
+
+    // Otherwise, create a new signed URL from file_path
+    if (doc.file_path) {
+      const { data: signed, error: signedErr } = await supabase.storage
+        .from('agency_documents')
+        .createSignedUrl(doc.file_path, 3600);
+
+      if (signedErr) {
+        return res.status(500).json({ success: false, message: 'Failed to refresh signed URL' });
+      }
+
+      return res.json({ success: true, url: signed.signedUrl });
+    }
+
+    return res.status(404).json({ success: false, message: 'Document file path not found' });
+  } catch (err) {
+    console.error('Signed URL refresh error:', err);
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+/**
+ * GET /api/admin/documents/:docId/view
+ * Serve document file from Supabase Storage (proxy)
+ */
+router.get('/documents/:docId/view', authenticateAdmin, async (req, res) => {
+  try {
+    const { docId } = req.params;
+
+    // Fetch document metadata
+    const { data: doc, error: fetchErr } = await supabase
+      .from('agency_documents')
+      .select('file_path, file_url, file_name, mime_type')
+      .eq('id', docId)
+      .single();
+
+    if (fetchErr || !doc) {
+      return res.status(404).json({ success: false, message: 'Document not found' });
+    }
+
+    // If public URL exists, redirect to it
+    if (doc.file_url) {
+      return res.redirect(doc.file_url);
+    }
+
+    // Otherwise, create signed URL and redirect
+    if (doc.file_path) {
+      const { data: signed, error: signedErr } = await supabase.storage
+        .from('agency_documents')
+        .createSignedUrl(doc.file_path, 3600);
+
+      if (signedErr) {
+        return res.status(500).json({ success: false, message: 'Failed to generate signed URL' });
+      }
+
+      return res.redirect(signed.signedUrl);
+    }
+
+    return res.status(404).json({ success: false, message: 'Document file path not found' });
+  } catch (err) {
+    console.error('Document view error:', err);
+    res.status(500).json({ success: false, message: err.message });
   }
 });
 

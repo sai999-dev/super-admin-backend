@@ -31,6 +31,24 @@ const { performanceMonitor, errorTracker, getHealthData } = require('./middlewar
 // Import services for webhook processing (moved to webhook handler to avoid circular dependencies)
 
 const app = express();
+
+// ==================================================
+// FIX STATIC IMAGE LOADING FOR ADMIN PANEL (WORKING)
+// ==================================================
+const uploadsPath = path.join(__dirname, 'uploads');
+console.log("📁 Serving uploads from:", uploadsPath);
+console.log("📂 Exists:", fs.existsSync(uploadsPath));
+
+app.use('/uploads', (req, res, next) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  if (req.method === 'OPTIONS') return res.status(200).end();
+  next();
+});
+
+app.use('/uploads', express.static(uploadsPath));
+
 const PORT = process.env.PORT || 3000;
 const NODE_ENV = process.env.NODE_ENV || 'development';
 
@@ -2070,39 +2088,9 @@ app.get('/api/admin/leads/stats', async (req, res) => {
 });
 
 // =====================================================
-// STATIC FILE SERVING - UPLOADS (MUST BE FIRST)
-// =====================================================
-
-// Serve uploaded files publicly
-// IMPORTANT: This MUST be registered BEFORE frontend static serving
-// to prevent frontend static middleware from intercepting /uploads requests
-const uploadsPath = path.join(__dirname, 'uploads');
-app.use('/uploads', express.static(uploadsPath, {
-  dotfiles: 'ignore',
-  etag: true,
-  index: false,
-  maxAge: '1d'
-}));
-console.log("📁 Serving static files from:", uploadsPath);
-console.log("📁 Full absolute path:", path.resolve(uploadsPath));
-
-// Debug: Test if a file exists
-const testFilePath = path.join(uploadsPath, 'documents', '1763096908546-380972941.jpg');
-if (fs.existsSync(testFilePath)) {
-  console.log("✅ Test file exists:", testFilePath);
-} else {
-  console.log("⚠️ Test file NOT found:", testFilePath);
-  // List files in documents directory
-  const documentsDir = path.join(uploadsPath, 'documents');
-  if (fs.existsSync(documentsDir)) {
-    const files = fs.readdirSync(documentsDir);
-    console.log("📄 Files in documents directory:", files.slice(0, 5));
-  }
-}
-
-// =====================================================
 // STATIC FILE SERVING - FRONTEND
 // =====================================================
+// Note: /uploads static serving is configured at the top of the file (after app = express())
 
 // Check if frontend directory exists
 const frontendPath = path.join(__dirname, '..', 'frontend');
@@ -2172,6 +2160,7 @@ app.get('/', (req, res) => {
 // Import mobile auth routes (public - registration/login)
 const mobileAuthRoutes = require('./routes/mobileAuthRoutes');
 const agencyDocumentsRoutes = require('./routes/agencyDocumentsRoutes');
+const mobileAgencyDocumentsRoutes = require('./routes/mobileAgencyDocumentsRoutes');
 
 // Import mobile routes
 const mobileRoutes = require('./routes/mobileRoutes');
@@ -2205,6 +2194,7 @@ const leadDistributionRoutes = require('./routes/leadDistributionRoutes');
 app.use('/api/v1/agencies', mobileAuthRoutes);
 // Agency document upload routes
 app.use('/api/v1/agencies', agencyDocumentsRoutes);
+app.use('/api/v1/agencies', mobileAgencyDocumentsRoutes);
 // Password Reset Routes (Forgot Password, Verify Code, Reset Password)
 const passwordResetRoutes = require('./routes/passwordResetRoutes');
 app.use('/api/mobile/auth', passwordResetRoutes);
@@ -2235,6 +2225,7 @@ app.use('/api/admin', adminSystemRoutes);
 app.use('/api/admin', adminRolesRoutes);
 app.use('/api/admin', adminLeadsRoutes);
 app.use('/api/admin', adminDocumentVerificationRoutes);
+app.use('/api/admin', agencyDocumentsRoutes);
 app.use('/api/admin', adminDocumentsRoutes);
 app.use('/api/admin', adminAgencyRoutes);
 // Register admin portals routes BEFORE other admin routes to ensure proper matching
@@ -2258,6 +2249,38 @@ app.use((req, res, next) => {
     });
   }
   next();
+});
+
+// Route to serve agency documents from Supabase Storage
+// Handles paths like /{agencyId}/{filename} for document viewing
+app.get('/:agencyId/:filename', async (req, res, next) => {
+  const { agencyId, filename } = req.params;
+  
+  // Only handle if it looks like a document request (has file extension)
+  if (!filename.match(/\.(pdf|jpg|jpeg|png|gif|doc|docx)$/i)) {
+    return next();
+  }
+
+  try {
+    const supabase = require('./config/supabaseClient');
+    const filePath = `${agencyId}/${filename}`;
+    
+    // Create signed URL for the file
+    const { data: signed, error } = await supabase.storage
+      .from('agency_documents')
+      .createSignedUrl(filePath, 3600); // 1 hour expiry
+
+    if (error || !signed) {
+      console.error('Error generating signed URL for document:', error);
+      return res.status(404).json({ success: false, message: 'Document not found' });
+    }
+
+    // Redirect to the signed URL
+    return res.redirect(signed.signedUrl);
+  } catch (err) {
+    console.error('Error serving document:', err);
+    return next();
+  }
 });
 
 // Catch-all handler for client-side routing (SPA) - Express 5.x compatible
