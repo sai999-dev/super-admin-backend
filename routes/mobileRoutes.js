@@ -88,6 +88,15 @@ router.post('/auth/register', async (req, res) => {
       });
     }
     
+    // Validate agency_name or business_name is provided
+    if (!agency_name && !business_name) {
+      console.log('❌ Validation failed: missing agency_name or business_name');
+      return res.status(400).json({
+        success: false,
+        message: 'Agency name or business name is required'
+      });
+    }
+    
     console.log('✅ Validation passed');
 
     const normalizedEmail = email.trim().toLowerCase();
@@ -114,7 +123,9 @@ router.post('/auth/register', async (req, res) => {
     // Use columns that exist in the database (confirmed from schema)
     const agencyData = {
       agency_name: agency_name || business_name,  // ✅ EXISTS
+      business_name: business_name || agency_name, // ✅ EXISTS
       email: normalizedEmail,                     // ✅ EXISTS
+      password_hash: hashedPassword,               // ✅ EXISTS - CRITICAL: Must save password for login
       status: 'PENDING',                          // ✅ EXISTS - Start as PENDING
       industry: industry || 'general',            // ✅ EXISTS
       verification_status: 'NOT VERIFIED',        // ✅ EXISTS
@@ -122,9 +133,9 @@ router.post('/auth/register', async (req, res) => {
       updated_at: now.toISOString()               // ✅ EXISTS
     };
     
-    // Add business_name if provided (column EXISTS in database)
-    if (business_name && business_name !== agency_name) {
-      agencyData.business_name = business_name;  // ✅ Column exists!
+    // Add phone_number if provided and column exists
+    if (phone) {
+      agencyData.phone_number = phone.trim();
     }
     // Note: contact_name column doesn't exist in database - skipping it
     // if (contact_name) {
@@ -147,22 +158,32 @@ router.post('/auth/register', async (req, res) => {
     console.log('Agency data (FINAL):', JSON.stringify(agencyData, null, 2));
     console.log('⚠️ Removed contact_name and phone from agencyData (columns don\'t exist)');
 
-    console.log('Attempting to insert with data:', JSON.stringify(agencyData, null, 2));
+    console.log('🔵 Attempting to insert with data:', JSON.stringify(agencyData, null, 2));
+    console.log('🔵 Columns being inserted:', Object.keys(agencyData).join(', '));
     
     let createdAgency = null;
     try {
+      console.log('🔵 Calling Supabase insert...');
       const { data, error: createError } = await supabase
         .from('agencies')
         .insert([agencyData])
         .select('*')
         .single();
 
+      console.log('🔵 Supabase response received');
+      console.log('🔵 Has data:', !!data);
+      console.log('🔵 Has error:', !!createError);
+
       if (createError) {
-        console.error('❌ Supabase error creating agency:', JSON.stringify(createError, null, 2));
+        console.error('❌ ========================================');
+        console.error('❌ SUPABASE ERROR CREATING AGENCY');
         console.error('❌ Error code:', createError.code);
         console.error('❌ Error message:', createError.message);
         console.error('❌ Error details:', createError.details);
         console.error('❌ Error hint:', createError.hint);
+        console.error('❌ Full error:', JSON.stringify(createError, null, 2));
+        console.error('❌ Data attempted:', JSON.stringify(agencyData, null, 2));
+        console.error('❌ ========================================');
         
         const errorResponse = {
           success: false,
@@ -179,7 +200,11 @@ router.post('/auth/register', async (req, res) => {
       }
       
       if (!data) {
-        console.error('❌ No agency data returned from insert');
+        console.error('❌ ========================================');
+        console.error('❌ NO DATA RETURNED FROM INSERT');
+        console.error('❌ Insert succeeded but no data returned');
+        console.error('❌ This might indicate a database issue');
+        console.error('❌ ========================================');
         return res.status(500).json({
           success: false,
           message: 'Failed to create agency',
@@ -187,7 +212,28 @@ router.post('/auth/register', async (req, res) => {
         });
       }
       
+      console.log('✅ Agency data returned from insert:', JSON.stringify(data, null, 2));
+      console.log('✅ Agency ID:', data.id);
       createdAgency = data;
+      
+      // Verify the agency was actually saved by querying it back
+      console.log('🔵 Verifying agency was saved to database...');
+      const { data: verifyData, error: verifyError } = await supabase
+        .from('agencies')
+        .select('*')
+        .eq('id', data.id)
+        .single();
+      
+      if (verifyError) {
+        console.error('❌ VERIFICATION FAILED: Could not retrieve saved agency');
+        console.error('❌ Verify error:', verifyError.message);
+      } else if (verifyData) {
+        console.log('✅ VERIFICATION SUCCESS: Agency confirmed in database');
+        console.log('✅ Verified agency ID:', verifyData.id);
+        console.log('✅ Verified email:', verifyData.email);
+      } else {
+        console.error('❌ VERIFICATION FAILED: Agency not found after insert');
+      }
     } catch (insertErr) {
       console.error('❌ Exception during insert:', insertErr);
       console.error('❌ Insert error stack:', insertErr.stack);
@@ -200,6 +246,10 @@ router.post('/auth/register', async (req, res) => {
     }
     
     if (!createdAgency) {
+      console.error('❌ ========================================');
+      console.error('❌ CREATED AGENCY IS NULL');
+      console.error('❌ This should not happen if insert succeeded');
+      console.error('❌ ========================================');
       return res.status(500).json({
         success: false,
         message: 'Failed to create agency',
@@ -207,7 +257,12 @@ router.post('/auth/register', async (req, res) => {
       });
     }
     
-    console.log('✅ Agency created successfully:', createdAgency.id);
+    console.log('✅ ========================================');
+    console.log('✅ AGENCY CREATED SUCCESSFULLY');
+    console.log('✅ Agency ID:', createdAgency.id);
+    console.log('✅ Email:', createdAgency.email);
+    console.log('✅ Agency Name:', createdAgency.agency_name || createdAgency.business_name);
+    console.log('✅ ========================================');
     
     // Try to activate the account (PENDING -> ACTIVE)
     try {
@@ -296,6 +351,121 @@ router.post('/auth/register', async (req, res) => {
         } else {
           subscription = subscriptionData;
           console.log('✅ Subscription created:', subscription.id);
+          
+          // Create transaction and invoice after subscription is created
+          try {
+            console.log('🔵 Creating transaction and invoice...');
+            console.log('🔵 Plan ID:', plan_id);
+            
+            // Get plan price - try multiple possible column names
+            const { data: planInfo, error: planError } = await supabase
+              .from('subscription_plans')
+              .select('*')
+              .eq('id', plan_id)
+              .maybeSingle();
+            
+            console.log('🔵 Plan lookup result:', {
+              found: !!planInfo,
+              error: planError?.message,
+              planData: planInfo ? {
+                id: planInfo.id,
+                plan_name: planInfo.plan_name,
+                base_price: planInfo.base_price,
+                price_per_unit: planInfo.price_per_unit,
+                price: planInfo.price,
+                monthly_price: planInfo.monthly_price,
+                allKeys: Object.keys(planInfo)
+              } : null
+            });
+            
+            // Get price_per_unit (this is the price per territory unit)
+            const pricePerUnit = planInfo?.price_per_unit || 
+                                planInfo?.base_price || 
+                                planInfo?.price || 
+                                planInfo?.monthly_price || 
+                                0;
+            
+            // Calculate total amount based on number of zipcodes/units
+            // If zipcodes provided, multiply price_per_unit by number of zipcodes
+            // Otherwise, use price_per_unit as base amount (for 1 unit)
+            const zipcodeCount = Array.isArray(zipcodes) ? zipcodes.length : 0;
+            const planPrice = zipcodeCount > 0 
+              ? pricePerUnit * zipcodeCount 
+              : pricePerUnit; // Default to 1 unit if no zipcodes specified
+            
+            const planName = planInfo?.plan_name || planInfo?.name || 'Unknown Plan';
+            const agencyName = normalizedAgency.business_name || normalizedAgency.agency_name || createdAgency.agency_name || createdAgency.business_name || 'Agency';
+            
+            console.log('🔵 Price per unit:', pricePerUnit);
+            console.log('🔵 Zipcode count:', zipcodeCount);
+            console.log('🔵 Calculated total amount:', planPrice);
+            console.log('🔵 Plan name:', planName);
+            
+            if (planPrice === 0 || pricePerUnit === 0) {
+              console.warn('⚠️ WARNING: Plan price is 0! Plan ID:', plan_id);
+              console.warn('⚠️ Price per unit:', pricePerUnit);
+              console.warn('⚠️ Plan data:', JSON.stringify(planInfo, null, 2));
+            }
+            
+            // Create transaction
+            const transactionInsert = {
+              agency_id: normalizedAgency.id,
+              transaction_type: 'subscription_payment',
+              amount: planPrice,
+              status: payment_method_id ? 'completed' : 'pending',
+              currency: 'USD',
+              gateway: payment_method_id ? 'stripe' : null,
+              agency: agencyName, // Store agency name as string
+              created_at: now.toISOString(), // Explicitly set creation date
+              metadata: {
+                subscription_id: subscription.id,
+                plan_id: plan_id,
+                payment_method_id: payment_method_id || null,
+                plan_name: planName
+              }
+            };
+            
+            const { data: transactionData, error: transactionError } = await supabase
+              .from('transactions')
+              .insert([transactionInsert])
+              .select()
+              .single();
+            
+            if (transactionError) {
+              console.error('❌ Error creating transaction:', JSON.stringify(transactionError, null, 2));
+            } else {
+              console.log('✅ Transaction created:', transactionData.id);
+              console.log('✅ Transaction amount:', transactionData.amount);
+            }
+            
+            // Create invoice
+            const invoiceInsertData = {
+              agency_id: normalizedAgency.id,
+              stripe_invoice_id: null,
+              currency: 'USD',
+              status: payment_method_id ? 'paid' : 'pending',
+              due_date: nextBilling.toISOString(),
+              created_date: now.toISOString().split('T')[0], // YYYY-MM-DD format
+              amount: planPrice,
+              agency: agencyName
+            };
+            
+            const { data: invoiceData, error: invoiceError } = await supabase
+              .from('invoices')
+              .insert([invoiceInsertData])
+              .select()
+              .single();
+            
+            if (invoiceError) {
+              console.error('❌ Error creating invoice:', JSON.stringify(invoiceError, null, 2));
+            } else {
+              console.log('✅ Invoice created:', invoiceData.id);
+              console.log('✅ Invoice amount:', invoiceData.amount);
+            }
+          } catch (finErr) {
+            console.error('❌ Exception creating transaction/invoice:', finErr);
+            // Don't fail registration if transaction/invoice creation fails
+          }
         }
 
         // Add territories (only if subscription was created)

@@ -15,7 +15,7 @@ module.exports = (sequelize, DataTypes) => {
       }
     },
     transactionType: {
-      type: DataTypes.ENUM('credit_purchase', 'lead_purchase', 'refund', 'subscription_payment', 'adjustment'),
+      type: DataTypes.ENUM('credit_purchase', 'lead_purchase', 'subscription_payment', 'adjustment'),
       allowNull: false,
       field: 'transaction_type'
     },
@@ -24,48 +24,14 @@ module.exports = (sequelize, DataTypes) => {
       allowNull: false
     },
     status: {
-      type: DataTypes.ENUM('pending', 'completed', 'failed', 'refunded'),
+      type: DataTypes.ENUM('pending', 'completed', 'failed'),
       defaultValue: 'pending'
-    },
-    description: {
-      type: DataTypes.TEXT,
-      allowNull: true
-    },
-    referenceId: {
-      type: DataTypes.UUID,
-      allowNull: true,
-      field: 'reference_id'
-    },
-    referenceType: {
-      type: DataTypes.STRING(50),
-      allowNull: true,
-      field: 'reference_type'
-    },
-    paymentMethod: {
-      type: DataTypes.STRING(50),
-      allowNull: true,
-      field: 'payment_method'
-    },
-    paymentReference: {
-      type: DataTypes.STRING(255),
-      allowNull: true,
-      field: 'payment_reference'
-    },
-    processedAt: {
-      type: DataTypes.DATE,
-      allowNull: true,
-      field: 'processed_at'
-    },
-    failureReason: {
-      type: DataTypes.TEXT,
-      allowNull: true,
-      field: 'failure_reason'
     }
   }, {
     tableName: 'transactions',
     timestamps: true,
     createdAt: 'created_at',
-    updatedAt: 'updated_at',
+    updatedAt: false,
     indexes: [
       {
         fields: ['agency_id']
@@ -78,12 +44,6 @@ module.exports = (sequelize, DataTypes) => {
       },
       {
         fields: ['created_at']
-      },
-      {
-        fields: ['reference_id']
-      },
-      {
-        fields: ['payment_reference']
       }
     ]
   });

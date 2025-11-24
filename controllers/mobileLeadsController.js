@@ -14,29 +14,11 @@ async function getLeads(req, res) {
     const agencyId = req.agency.id;
     const { status, from_date, to_date, limit = 50, page = 1 } = req.query;
 
-    // Build query
+    // Build query - fetch lead_assignments first, then get leads separately
+    // This avoids the relationship cache issue
     let query = supabase
       .from('lead_assignments')
-      .select(`
-        *,
-        leads (
-          id,
-          first_name,
-          last_name,
-          email,
-          phone,
-          address,
-          city,
-          state,
-          zipcode,
-          status,
-          source,
-          notes,
-          assigned_at,
-          created_at,
-          updated_at
-        )
-      `)
+      .select('*')
       .eq('agency_id', agencyId);
 
     // Apply filters
@@ -85,15 +67,39 @@ async function getLeads(req, res) {
 
     if (error) throw error;
 
-    // Transform response
-    const leads = (assignments || []).map(a => ({
-      ...a.leads,
-      assignment_status: a.status,
-      assignment_id: a.id,
-      assigned_at: a.assigned_at,
-      accepted_at: a.accepted_at,
-      rejected_at: a.rejected_at
-    }));
+    // Get lead IDs from assignments
+    const leadIds = (assignments || []).map(a => a.lead_id).filter(Boolean);
+    
+    // Fetch leads separately to avoid relationship cache issue
+    let leadsData = [];
+    if (leadIds.length > 0) {
+      const { data: leads, error: leadsError } = await supabase
+        .from('leads')
+        .select('id, first_name, last_name, email, phone, address, city, state, zipcode, status, source, notes, assigned_at, created_at, updated_at')
+        .in('id', leadIds);
+      
+      if (leadsError) {
+        console.error('Error fetching leads:', leadsError);
+        throw leadsError;
+      }
+      
+      // Create a map of lead_id -> lead data
+      const leadsMap = new Map((leads || []).map(l => [l.id, l]));
+      
+      // Transform response by combining assignment and lead data
+      leadsData = (assignments || [])
+        .filter(a => leadsMap.has(a.lead_id))
+        .map(a => ({
+          ...leadsMap.get(a.lead_id),
+          assignment_status: a.status,
+          assignment_id: a.id,
+          assigned_at: a.assigned_at,
+          accepted_at: a.accepted_at,
+          rejected_at: a.rejected_at
+        }));
+    }
+    
+    const leads = leadsData;
 
     res.json({
       success: true,

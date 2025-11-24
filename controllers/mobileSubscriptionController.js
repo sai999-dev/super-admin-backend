@@ -955,30 +955,126 @@ exports.getInvoices = async (req, res) => {
     const limit = parseIntOr(req.query.limit, 20);
     const offset = (page - 1) * limit;
 
+    // Fetch transactions - use created_at as the date field
+    // Explicitly select all fields including agency and created_at
     const { data: transactions, error, count } = await supabase
       .from('transactions')
-      .select('*, subscriptions(plan_id)', { count: 'exact' })
+      .select('id, agency_id, agency, transaction_type, amount, status, currency, gateway, created_at, created_date, metadata', { count: 'exact' })
       .eq('agency_id', agencyId)
-      .order('transaction_date', { ascending: false })
+      .order('created_at', { ascending: false })
       .range(offset, offset + limit - 1);
 
-    if (error) throw error;
+    if (error) {
+      console.error('Error fetching transactions:', error);
+      throw error;
+    }
+    
+    console.log('🔵 Fetched transactions:', transactions?.length || 0);
+    if (transactions && transactions.length > 0) {
+      console.log('🔵 Sample transaction:', {
+        id: transactions[0].id,
+        agency: transactions[0].agency,
+        agency_id: transactions[0].agency_id,
+        created_at: transactions[0].created_at,
+        hasAgency: !!transactions[0].agency,
+        hasCreatedAt: !!transactions[0].created_at
+      });
+    }
 
-    // Get plan details
+    // Get plan IDs from transaction metadata
     const planIds = Array.from(new Set(
-      transactions.map(t => t.subscriptions?.plan_id).filter(Boolean)
+      (transactions || [])
+        .map(t => t.metadata?.plan_id)
+        .filter(Boolean)
     ));
     const planLookup = await buildPlanLookup(planIds);
 
-    const invoices = (transactions || []).map(t => ({
-      id: t.id,
-      amount: safeRound(t.amount),
-      status: t.status,
-      transaction_date: t.transaction_date,
-      invoice_number: t.invoice_number || `INV-${t.id}`,
-      plan_id: t.subscriptions?.plan_id,
-      plan_name: planLookup.get(t.subscriptions?.plan_id)?.plan_name || 'Unknown'
-    }));
+    // Get agency name for each transaction
+    const agencyIds = Array.from(new Set(
+      (transactions || []).map(t => t.agency_id).filter(Boolean)
+    ));
+    
+    let agencyLookup = new Map();
+    if (agencyIds.length > 0) {
+      const { data: agencies } = await supabase
+        .from('agencies')
+        .select('id, business_name, agency_name')
+        .in('id', agencyIds);
+      
+      (agencies || []).forEach(agency => {
+        agencyLookup.set(agency.id, agency.business_name || agency.agency_name || 'Unknown Agency');
+      });
+    }
+
+    const invoices = (transactions || []).map(t => {
+      // Format date properly - use created_at, then created_date, then fallback to current date
+      const transactionDate = t.created_at || t.created_date || new Date().toISOString();
+      
+      // Get agency name - prefer stored agency field, then lookup, then fallback
+      const agencyName = t.agency || agencyLookup.get(t.agency_id) || 'Unknown Agency';
+      
+      // Log for debugging
+      if (!t.agency && !agencyLookup.has(t.agency_id)) {
+        console.warn('⚠️ Transaction missing agency:', {
+          id: t.id,
+          agency_id: t.agency_id,
+          hasAgencyField: !!t.agency,
+          agencyLookupHas: agencyLookup.has(t.agency_id)
+        });
+      }
+      
+      if (!transactionDate || transactionDate === 'Invalid Date') {
+        console.warn('⚠️ Transaction missing date:', {
+          id: t.id,
+          created_at: t.created_at,
+          created_date: t.created_date
+        });
+      }
+      
+      const invoiceData = {
+        id: t.id || '',
+        amount: safeRound(t.amount),
+        status: t.status || 'pending',
+        date: transactionDate || new Date().toISOString(), // Always ensure date is set
+        transaction_date: transactionDate || new Date().toISOString(), // Also include for backward compatibility
+        created_date: transactionDate || new Date().toISOString(), // Alternative date field name
+        invoice_number: t.invoice_number || `INV-${t.id.substring(0, 8).toUpperCase()}`,
+        agency: agencyName || 'Unknown Agency', // Always ensure agency is set, never null
+        agency_name: agencyName || 'Unknown Agency', // Alternative field name for frontend
+        agency_id: t.agency_id || '',
+        plan_id: t.metadata?.plan_id || null,
+        plan_name: planLookup.get(t.metadata?.plan_id)?.plan_name || 
+                   planLookup.get(t.metadata?.plan_id)?.name || 
+                   'Unknown Plan',
+        type: t.transaction_type || 'subscription_payment',
+        currency: t.currency || 'USD'
+      };
+      
+      // Ensure no null values - convert to empty string or default
+      if (!invoiceData.agency || invoiceData.agency === 'null' || invoiceData.agency === null) {
+        invoiceData.agency = 'Unknown Agency';
+        invoiceData.agency_name = 'Unknown Agency';
+      }
+      
+      if (!invoiceData.date || invoiceData.date === 'null' || invoiceData.date === null) {
+        invoiceData.date = new Date().toISOString();
+        invoiceData.transaction_date = invoiceData.date;
+        invoiceData.created_date = invoiceData.date;
+      }
+      
+      return invoiceData;
+    });
+    
+    console.log('🔵 Returning invoices:', invoices.length);
+    if (invoices.length > 0) {
+      console.log('🔵 Sample invoice response:', {
+        id: invoices[0].id,
+        agency: invoices[0].agency,
+        date: invoices[0].date,
+        hasAgency: !!invoices[0].agency,
+        hasDate: !!invoices[0].date
+      });
+    }
 
     res.json({
       success: true,
