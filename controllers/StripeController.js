@@ -56,6 +56,10 @@ class StripeController {
       const unitPrice = customPrice ? customPrice / (unitsPurchased || 1) : plan.price_per_unit;
       const amount = Math.round(unitPrice * (unitsPurchased || 1) * 100);
 
+      // For mobile apps, use a simple success page that shows payment status
+      // The app will check payment status via the session ID
+      const baseUrl = process.env.BASE_API_URL || `http://localhost:${process.env.PORT || 5000}`;
+
       const session = await stripe.checkout.sessions.create({
         payment_method_types: ['card'],
         mode: 'subscription',
@@ -74,8 +78,8 @@ class StripeController {
           },
           quantity: 1
         }],
-        success_url: `${process.env.FRONTEND_URL}/subscription/success?session_id={CHECKOUT_SESSION_ID}`,
-        cancel_url: `${process.env.FRONTEND_URL}/subscription/cancelled`,
+        success_url: `${baseUrl}/api/stripe/payment-success?session_id={CHECKOUT_SESSION_ID}`,
+        cancel_url: `${baseUrl}/api/stripe/payment-cancelled?session_id={CHECKOUT_SESSION_ID}`,
         customer_email: email,
         metadata: {
           subscriptionId: subscription.id,
@@ -538,6 +542,232 @@ class StripeController {
         stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
       });
     }
+  }
+
+  /**
+   * Payment success page - Shows after successful Stripe checkout
+   */
+  async paymentSuccess(req, res) {
+    const { session_id } = req.query;
+
+    if (!session_id) {
+      return res.status(400).send(`
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <title>Payment Error</title>
+          <style>
+            body { font-family: Arial, sans-serif; text-align: center; padding: 50px; background: #f5f5f5; }
+            .container { background: white; padding: 40px; border-radius: 8px; max-width: 500px; margin: 0 auto; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+            h1 { color: #e74c3c; }
+          </style>
+        </head>
+        <body>
+          <div class="container">
+            <h1>❌ Payment Error</h1>
+            <p>No session ID provided.</p>
+          </div>
+        </body>
+        </html>
+      `);
+    }
+
+    try {
+      // Retrieve session details
+      const session = await stripe.checkout.sessions.retrieve(session_id);
+
+      console.log('✅ Payment Success Page - Session:', session_id);
+      console.log('✅ Payment Status:', session.payment_status);
+
+      if (session.payment_status === 'paid') {
+        return res.send(`
+          <!DOCTYPE html>
+          <html>
+          <head>
+            <title>Payment Successful</title>
+            <meta name="viewport" content="width=device-width, initial-scale=1">
+            <style>
+              body {
+                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
+                text-align: center;
+                padding: 20px;
+                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                min-height: 100vh;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                margin: 0;
+              }
+              .container {
+                background: white;
+                padding: 40px;
+                border-radius: 12px;
+                max-width: 500px;
+                width: 100%;
+                box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+              }
+              h1 { color: #10b981; margin-bottom: 10px; font-size: 28px; }
+              .checkmark { font-size: 64px; margin-bottom: 20px; }
+              p { color: #64748b; line-height: 1.6; margin: 15px 0; }
+              .info { background: #f8fafc; padding: 20px; border-radius: 8px; margin: 20px 0; }
+              .info p { margin: 8px 0; font-size: 14px; }
+              .close-btn {
+                background: #10b981;
+                color: white;
+                border: none;
+                padding: 12px 24px;
+                border-radius: 6px;
+                font-size: 16px;
+                cursor: pointer;
+                margin-top: 20px;
+                font-weight: 600;
+              }
+              .close-btn:hover { background: #059669; }
+            </style>
+          </head>
+          <body>
+            <div class="container">
+              <div class="checkmark">✅</div>
+              <h1>Payment Successful!</h1>
+              <p>Your subscription has been activated.</p>
+              <div class="info">
+                <p><strong>Session ID:</strong></p>
+                <p style="font-size: 12px; word-break: break-all;">${session_id}</p>
+              </div>
+              <p style="color: #10b981; font-weight: 600;">You can now close this page and return to the app.</p>
+              <button class="close-btn" onclick="window.close()">Close This Page</button>
+            </div>
+            <script>
+              // Auto-close after 5 seconds
+              setTimeout(() => {
+                window.close();
+                // If window.close() doesn't work (browser restriction), show message
+                setTimeout(() => {
+                  document.querySelector('.container').innerHTML =
+                    '<h1 style="color: #10b981;">✅ Payment Complete</h1>' +
+                    '<p>Please close this tab and return to your app.</p>';
+                }, 500);
+              }, 5000);
+            </script>
+          </body>
+          </html>
+        `);
+      } else {
+        return res.send(`
+          <!DOCTYPE html>
+          <html>
+          <head>
+            <title>Payment Pending</title>
+            <meta name="viewport" content="width=device-width, initial-scale=1">
+            <style>
+              body { font-family: Arial, sans-serif; text-align: center; padding: 50px; background: #f5f5f5; }
+              .container { background: white; padding: 40px; border-radius: 8px; max-width: 500px; margin: 0 auto; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+              h1 { color: #f59e0b; }
+            </style>
+          </head>
+          <body>
+            <div class="container">
+              <h1>⏳ Payment Pending</h1>
+              <p>Your payment is being processed.</p>
+              <p>Status: ${session.payment_status}</p>
+            </div>
+          </body>
+          </html>
+        `);
+      }
+    } catch (error) {
+      console.error('❌ Error retrieving session:', error);
+      return res.status(500).send(`
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <title>Error</title>
+          <style>
+            body { font-family: Arial, sans-serif; text-align: center; padding: 50px; background: #f5f5f5; }
+            .container { background: white; padding: 40px; border-radius: 8px; max-width: 500px; margin: 0 auto; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+            h1 { color: #e74c3c; }
+          </style>
+        </head>
+        <body>
+          <div class="container">
+            <h1>❌ Error</h1>
+            <p>Could not retrieve payment details.</p>
+          </div>
+        </body>
+        </html>
+      `);
+    }
+  }
+
+  /**
+   * Payment cancelled page - Shows when user cancels Stripe checkout
+   */
+  async paymentCancelled(req, res) {
+    const { session_id } = req.query;
+
+    console.log('⚠️ Payment Cancelled - Session:', session_id);
+
+    return res.send(`
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <title>Payment Cancelled</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <style>
+          body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
+            text-align: center;
+            padding: 20px;
+            background: linear-gradient(135deg, #f59e0b 0%, #ef4444 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin: 0;
+          }
+          .container {
+            background: white;
+            padding: 40px;
+            border-radius: 12px;
+            max-width: 500px;
+            width: 100%;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+          }
+          h1 { color: #f59e0b; margin-bottom: 10px; font-size: 28px; }
+          .icon { font-size: 64px; margin-bottom: 20px; }
+          p { color: #64748b; line-height: 1.6; margin: 15px 0; }
+          .close-btn {
+            background: #f59e0b;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 6px;
+            font-size: 16px;
+            cursor: pointer;
+            margin-top: 20px;
+            font-weight: 600;
+          }
+          .close-btn:hover { background: #d97706; }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <div class="icon">⚠️</div>
+          <h1>Payment Cancelled</h1>
+          <p>You cancelled the payment process.</p>
+          <p>No charges have been made to your account.</p>
+          <p style="color: #64748b; font-size: 14px; margin-top: 20px;">You can close this page and try again from the app.</p>
+          <button class="close-btn" onclick="window.close()">Close This Page</button>
+        </div>
+        <script>
+          // Auto-close after 3 seconds
+          setTimeout(() => {
+            window.close();
+          }, 3000);
+        </script>
+      </body>
+      </html>
+    `);
   }
 }
 

@@ -462,14 +462,21 @@ class StripeService {
    * Handle invoice payment succeeded webhook
    */
   async handleInvoicePaymentSucceeded(invoice) {
-    console.log('✅ Invoice payment succeeded:', invoice.id);
-    console.log('Payment Intent:', invoice.payment_intent);
-    console.log('Subscription:', invoice.subscription);
+    console.log('═══════════════════════════════════════════════');
+    console.log('✅✅✅ INVOICE PAYMENT SUCCEEDED WEBHOOK');
+    console.log('═══════════════════════════════════════════════');
+    console.log('📋 Invoice ID:', invoice.id);
+    console.log('📋 Payment Intent:', invoice.payment_intent);
+    console.log('📋 Subscription:', invoice.subscription);
+    console.log('📋 Amount Paid:', invoice.amount_paid / 100, invoice.currency?.toUpperCase());
+    console.log('📋 Customer:', invoice.customer);
 
     // Extract payment intent ID
-    const paymentIntentId = typeof invoice.payment_intent === 'string' 
-      ? invoice.payment_intent 
+    const paymentIntentId = typeof invoice.payment_intent === 'string'
+      ? invoice.payment_intent
       : invoice.payment_intent?.id;
+
+    console.log('💳 Extracted Payment Intent ID:', paymentIntentId);
 
     // Find transaction by stripe_payment_intent_id first
     let { data: transaction, error: findError } = await supabase
@@ -565,13 +572,21 @@ class StripeService {
     }
 
     if (findError || !transaction) {
-      console.error('❌ Transaction not found for invoice:', invoice.id);
-      console.error('Payment Intent:', paymentIntentId);
-      console.error('Stripe Subscription:', invoice.subscription);
+      console.error('❌❌❌ TRANSACTION NOT FOUND');
+      console.error('❌ Invoice ID:', invoice.id);
+      console.error('❌ Payment Intent:', paymentIntentId);
+      console.error('❌ Stripe Subscription:', invoice.subscription);
+      console.error('❌ Find Error:', findError);
+      console.log('═══════════════════════════════════════════════\n');
       return;
     }
 
-    console.log('✅ Found transaction:', transaction.id);
+    console.log('✅✅✅ TRANSACTION FOUND!');
+    console.log('📝 Transaction ID:', transaction.id);
+    console.log('📝 Current Status:', transaction.status);
+    console.log('📝 Session ID:', transaction.sessionid);
+    console.log('📝 Current Payment Intent:', transaction.stripe_payment_intent_id);
+    console.log('📝 Current Invoice:', transaction.stripe_invoice_id);
 
     // Update transaction with payment intent ID (even if already completed)
     const updateData = {
@@ -592,19 +607,26 @@ class StripeService {
       updateData.metadata = metadata;
 
       // Update transaction
+      console.log('💾 Updating transaction with data:', JSON.stringify(updateData, null, 2));
+
       const { error: txError } = await supabase
         .from('transactions')
         .update(updateData)
         .eq('id', transaction.id);
 
       if (txError) {
-        console.error('❌ Error updating transaction:', txError);
+        console.error('❌❌❌ ERROR UPDATING TRANSACTION');
+        console.error('❌ Error:', txError);
+        console.log('═══════════════════════════════════════════════\n');
         return;
       }
 
-    console.log('✅ Transaction updated with payment intent ID:', paymentIntentId);
+    console.log('✅✅✅ TRANSACTION UPDATED SUCCESSFULLY!');
+    console.log('✅ Transaction ID:', transaction.id);
+    console.log('✅ Payment Intent ID:', paymentIntentId);
+    console.log('✅ Invoice ID:', invoice.id);
     if (transaction.status === 'pending') {
-      console.log('✅ Transaction status updated to completed');
+      console.log('✅ Status changed from pending → completed');
     }
 
     // Update subscription if transaction has subscription ID
@@ -619,9 +641,16 @@ class StripeService {
         })
         .eq('id', transaction.subscriptionid);
 
-      if (subError) console.error('❌ Error updating subscription:', subError);
-      else console.log('✅ Subscription updated to active');
+      if (subError) {
+        console.error('❌ Error updating subscription:', subError);
+      } else {
+        console.log('✅ Subscription updated to active');
+      }
     }
+
+    console.log('═══════════════════════════════════════════════');
+    console.log('✅ INVOICE PAYMENT WEBHOOK COMPLETED');
+    console.log('═══════════════════════════════════════════════\n');
   }
 }
 
