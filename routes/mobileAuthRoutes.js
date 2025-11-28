@@ -1053,54 +1053,120 @@ router.put('/profile', authenticateAgency, async (req, res) => {
 });
 
 
+
+/**
+ * POST /api/mobile/save-device-token
+ * Save device token for web or mobile (no auth required)
+ * Body:
+ * {
+ *   token: string,
+ *   platform: "web" | "android" | "ios"
+ * }
+ */
+/** 
+ * PUBLIC: Save Web / Mobile device token 
+ * (No authentication required for Flutter Web)
+ */
+/**
+ * PUBLIC: Save Web / Mobile device token (NO AUTH)
+ */
+// PUBLIC: Save Web / Mobile device token
+// PUBLIC: Save Web / Mobile device token
+router.post("/save-device-token", async (req, res) => {
+  try {
+    const { token, platform, agency_id } = req.body;
+
+    if (!token) return res.status(400).json({ success: false, message: "token is required" });
+    if (!agency_id) return res.status(400).json({ success: false, message: "agency_id is required" });
+
+    console.log("💾 Inserting device token", { token, platform, agency_id });
+
+    const { error } = await supabase.from("agency_devices").insert([
+      {
+        agency_id,
+        device_token: token,
+        platform: platform || "web",
+        device_type: platform || "web",
+        is_active: true,
+        push_enabled: true,
+        created_at: new Date().toISOString(),
+        last_seen: new Date().toISOString(),
+      },
+    ]);
+
+    if (error) {
+      console.error("❌ Insert error:", error);
+      return res.status(500).json({
+        success: false,
+        message: "Failed to save device token",
+        error: error.message,
+      });
+    }
+
+    return res.json({ success: true, message: "Device token saved successfully" });
+
+  } catch (err) {
+    console.error("❌ save-device-token error:", err);
+    return res.status(500).json({ success: false, message: "Server error", error: err.message });
+  }
+});
+
+
+
+
+
+
+
+
+
 /**
  * POST /api/v1/agencies/update-fcm
  * Save or update device FCM token for this agency
  */
-router.post('/update-fcm', authenticateAgency, async (req, res) => {
-  try {
-    const agencyId = req.agency.id;
-    const { fcm_token } = req.body;
+// router.post('/update-fcm', authenticateAgency, async (req, res) => {
+//   try {
+//     const agencyId = req.agency.id;
+//     const { fcm_token } = req.body;
 
-    if (!fcm_token) {
-      return res.status(400).json({
-        success: false,
-        message: "fcm_token is required"
-      });
-    }
+//     if (!fcm_token) {
+//       return res.status(400).json({
+//         success: false,
+//         message: "fcm_token is required"
+//       });
+//     }
 
-    console.log("📌 Updating FCM for agency:", agencyId, "Token:", fcm_token);
+//     console.log("📌 Updating FCM for agency:", agencyId, "Token:", fcm_token);
 
-    const { error } = await supabase
-      .from('agencies')
-      .update({
-        fcm_token: fcm_token,
-        updated_at: new Date().toISOString()
-      })
-      .eq('id', agencyId);
+//     const { error } = await supabase
+//       .from('agencies')
+//       .update({
+//         fcm_token: fcm_token,
+//         updated_at: new Date().toISOString()
+//       })
+//       .eq('id', agencyId);
 
-    if (error) {
-      console.error("❌ Failed to update FCM:", error.message);
-      return res.status(500).json({
-        success: false,
-        message: "Failed to update FCM token",
-        error: error.message
-      });
-    }
+//     if (error) {
+//       console.error("❌ Failed to update FCM:", error.message);
+//       return res.status(500).json({
+//         success: false,
+//         message: "Failed to update FCM token",
+//         error: error.message
+//       });
+//     }
 
-    return res.json({
-      success: true,
-      message: "FCM token updated successfully"
-    });
+//     return res.json({
+//       success: true,
+//       message: "FCM token updated successfully"
+//     });
 
-  } catch (error) {
-    console.error("❌ Error updating FCM token:", error);
-    res.status(500).json({
-      success: false,
-      message: "Server error updating FCM token"
-    });
-  }
-});
+//   } catch (error) {
+//     console.error("❌ Error updating FCM token:", error);
+//     res.status(500).json({
+//       success: false,
+//       message: "Server error updating FCM token"
+//     });
+//   }
+// });
 
 
 module.exports = router;

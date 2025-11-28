@@ -8,6 +8,9 @@ config.env
 .env.local
 .env.*.local
 
+# Firebase credentials
+firebase/serviceAccountKey.json
+
 # Logs
 logs/
 *.log
