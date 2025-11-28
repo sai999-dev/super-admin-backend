@@ -1,13 +1,18 @@
 const admin = require("firebase-admin");
-const path = require("path");
 
-const serviceAccount = require(path.join(
-  __dirname,
-  "../firebase/serviceAccountKey.json"
-));
+// Ensure the environment variable exists
+if (!process.env.FIREBASE_SERVICE_ACCOUNT_KEY) {
+  console.error("❌ FIREBASE_SERVICE_ACCOUNT_KEY is missing");
+  throw new Error("Firebase Admin service account not found in environment variables");
+}
+
+// Parse the key from the environment variable
+const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_KEY);
 
 admin.initializeApp({
   credential: admin.credential.cert(serviceAccount),
 });
+
+console.log("🔥 Firebase Admin initialized successfully");
 
 module.exports = admin;
