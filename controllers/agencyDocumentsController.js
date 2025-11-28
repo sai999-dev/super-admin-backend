@@ -67,26 +67,34 @@ exports.uploadAgencyDocument = async (req, res) => {
 
     console.log('✅ File uploaded successfully to Supabase Storage');
 
-    // Generate public URL
-    const publicUrlResponse = supabase.storage
-      .from('agency_documents')
-      .getPublicUrl(safeName);
+    // Get document_type and document_name from request
+    const document_type = req.body.document_type || 'verification';
+    const document_name = req.body.document_name || req.body.documentName || null;
 
-    const fileUrl = publicUrlResponse.data.publicUrl;
-    console.log('🔗 Generated public URL:', fileUrl);
+    // Validate: If document_type is "other", document_name is required
+    if (document_type === 'other' && (!document_name || document_name.trim() === '')) {
+      return res.status(400).json({
+        success: false,
+        message: 'document_name is required when document_type is "other"'
+      });
+    }
 
-    // Save to database
+    // Save to database - only save file_path, not file_url
     const insertPayload = {
       agency_id: agencyId,
-      document_type: req.body.document_type || 'verification',
+      document_type: document_type,
       file_name: originalName,
-      file_path: safeName,
-      file_url: fileUrl,
+      file_path: safeName, // Only save file_path
       mime_type: req.file.mimetype,
       size_bytes: req.file.size,
       description: req.body.description || '',
       status: 'PENDING'
     };
+
+    // Add document_name if provided (required for "other" type, optional for others)
+    if (document_name && document_name.trim() !== '') {
+      insertPayload.document_name = document_name.trim();
+    }
 
     console.log('💾 Saving to database...', insertPayload);
 
@@ -108,10 +116,23 @@ exports.uploadAgencyDocument = async (req, res) => {
 
     console.log('✅ Document saved successfully:', inserted.id);
 
+    // Return only file_path, not file_url
     res.status(201).json({
       success: true,
       message: "Document uploaded successfully",
-      document: inserted,
+      document: {
+        id: inserted.id,
+        agency_id: inserted.agency_id,
+        document_type: inserted.document_type,
+        document_name: inserted.document_name || null,
+        file_name: inserted.file_name,
+        file_path: inserted.file_path, // Only return file_path
+        mime_type: inserted.mime_type,
+        size_bytes: inserted.size_bytes,
+        description: inserted.description || '',
+        status: inserted.status,
+        uploaded_at: inserted.uploaded_at || inserted.created_at
+      }
     });
 
   } catch (err) {
@@ -140,7 +161,7 @@ exports.listAgencyDocumentsMobile = async (req, res) => {
     if (typeof supabase !== 'undefined') {
       const { data, error } = await supabase
         .from('agency_documents')
-        .select('id, agency_id, document_type, file_name, file_path, file_url, mime_type, size_bytes, description, status, uploaded_at, reviewed_at, reviewed_by')
+        .select('id, agency_id, document_type, document_name, file_name, file_path, file_url, mime_type, size_bytes, description, status, uploaded_at, reviewed_at, reviewed_by')
         .eq('agency_id', agencyId)
         .order('uploaded_at', { ascending: false });
 
@@ -153,9 +174,9 @@ exports.listAgencyDocumentsMobile = async (req, res) => {
         id: d.id,
         agency_id: d.agency_id,
         document_type: d.document_type,
+        document_name: d.document_name || null,
         file_name: d.file_name,
-        file_path: d.file_path,
-        file_url: d.file_url || null,       // public URL stored in DB (preferred)
+        file_path: d.file_path, // Only return file_path
         mime_type: d.mime_type,
         size_bytes: d.size_bytes,
         description: d.description || '',
@@ -171,7 +192,7 @@ exports.listAgencyDocumentsMobile = async (req, res) => {
     // FALLBACK: PostgreSQL
     if (typeof pgClient !== 'undefined' && pgClient) {
       const q = `
-        SELECT id, agency_id, document_type, file_name, file_path, file_url, mime_type, size_bytes, description, status, uploaded_at, reviewed_at, reviewed_by
+        SELECT id, agency_id, document_type, document_name, file_name, file_path, file_url, mime_type, size_bytes, description, status, uploaded_at, reviewed_at, reviewed_by
         FROM agency_documents
         WHERE agency_id = $1
         ORDER BY uploaded_at DESC
@@ -181,9 +202,9 @@ exports.listAgencyDocumentsMobile = async (req, res) => {
         id: row.id,
         agency_id: row.agency_id,
         document_type: row.document_type,
+        document_name: row.document_name || null,
         file_name: row.file_name,
-        file_path: row.file_path,
-        file_url: row.file_url || null,
+        file_path: row.file_path, // Only return file_path
         mime_type: row.mime_type,
         size_bytes: row.size_bytes,
         description: row.description || '',

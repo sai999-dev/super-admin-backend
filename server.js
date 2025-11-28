@@ -36,21 +36,10 @@ const { performanceMonitor, errorTracker, getHealthData } = require('./middlewar
 const app = express();
 
 // ==================================================
-// FIX STATIC IMAGE LOADING FOR ADMIN PANEL (WORKING)
+// STATIC FILE SERVING REMOVED
+// Documents are served directly from Supabase Storage
+// Backend only returns file_path for frontend to use
 // ==================================================
-const uploadsPath = path.join(__dirname, 'uploads');
-console.log("📁 Serving uploads from:", uploadsPath);
-console.log("📂 Exists:", fs.existsSync(uploadsPath));
-
-app.use('/uploads', (req, res, next) => {
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-  if (req.method === 'OPTIONS') return res.status(200).end();
-  next();
-});
-
-app.use('/uploads', express.static(uploadsPath));
 
 const PORT = process.env.PORT || 3000;
 const NODE_ENV = process.env.NODE_ENV || 'development';
@@ -1782,6 +1771,10 @@ app.use('/api/v1/agencies', mobileAgencyDocumentsRoutes);
 const passwordResetRoutes = require('./routes/passwordResetRoutes');
 app.use('/api/mobile/auth', passwordResetRoutes);
 
+// Registration Email Verification Routes (Send Code, Verify Code)
+const registerEmailRoutes = require('./routes/registerEmailRoutes');
+app.use('/api/mobile/auth', registerEmailRoutes);
+
 // Apply mobile routes
 app.use('/api/mobile', mobileRoutes);
 app.use('/api/mobile', mobileSubscriptionPurchaseRoutes);
@@ -1834,42 +1827,13 @@ app.use((req, res, next) => {
   next();
 });
 
-// Route to serve agency documents from Supabase Storage
-// Handles paths like /{agencyId}/{filename} for document viewing
-app.get('/:agencyId/:filename', async (req, res, next) => {
-  const { agencyId, filename } = req.params;
-  
-  // Only handle if it looks like a document request (has file extension)
-  if (!filename.match(/\.(pdf|jpg|jpeg|png|gif|doc|docx)$/i)) {
-    return next();
-  }
-
-  try {
-    const supabase = require('./config/supabaseClient');
-    const filePath = `${agencyId}/${filename}`;
-    
-    // Create signed URL for the file
-    const { data: signed, error } = await supabase.storage
-      .from('agency_documents')
-      .createSignedUrl(filePath, 3600); // 1 hour expiry
-
-    if (error || !signed) {
-      console.error('Error generating signed URL for document:', error);
-      return res.status(404).json({ success: false, message: 'Document not found' });
-    }
-
-    // Redirect to the signed URL
-    return res.redirect(signed.signedUrl);
-  } catch (err) {
-    console.error('Error serving document:', err);
-    return next();
-  }
-});
+// Document serving route removed - frontend should use file_path from API responses
+// to load documents directly from Supabase Storage
 
 // Catch-all handler for client-side routing (SPA) - Express 5.x compatible
 app.use((req, res, next) => {
-  // Skip static file requests (uploads) and API routes
-  if (req.path.startsWith('/uploads') || req.path.startsWith('/api')) {
+  // Skip API routes
+  if (req.path.startsWith('/api')) {
     return next();
   }
   // Only handle GET requests that aren't API routes or static files
@@ -1914,6 +1878,21 @@ app.use(ErrorHandler.notFound);
 // SERVER STARTUP
 // =====================================================
 
+// Helper function to get local IP address
+function getLocalIPAddress() {
+  const os = require('os');
+  const interfaces = os.networkInterfaces();
+  for (const name of Object.keys(interfaces)) {
+    for (const iface of interfaces[name]) {
+      // Skip internal (loopback) and non-IPv4 addresses
+      if (iface.family === 'IPv4' && !iface.internal) {
+        return iface.address;
+      }
+    }
+  }
+  return 'localhost';
+}
+
 // Start server
 async function startServer() {
   try {
@@ -1926,12 +1905,16 @@ async function startServer() {
       console.warn('⚠️ Supabase client initialization warning:', err.message);
     }
 
-    // Start server on primary port
-    const server = app.listen(PORT, () => {
+    // Get local IP address for network access
+    const localIP = getLocalIPAddress();
+
+    // Start server on primary port - listen on 0.0.0.0 to allow network access
+    const server = app.listen(PORT, '0.0.0.0', () => {
       console.log('\n🚀 Lead Marketplace Unified Server running!');
-      console.log(`✅ Server running on port ${PORT}`);
-      console.log(`🌐 Frontend: http://localhost:${PORT}`);
-      console.log(`🔗 Health check: http://localhost:${PORT}/api/health`);
+      console.log(`✅ Server running on port ${PORT} (accessible from network)`);
+      console.log(`🌐 Local: http://localhost:${PORT}`);
+      console.log(`🌐 Network: http://${localIP}:${PORT}`);
+      console.log(`🔗 Health check: http://${localIP}:${PORT}/api/health`);
       console.log(`📚 API Documentation: http://localhost:${PORT}/api`);
       console.log(`📊 Supabase: ${supabaseStatus}`);
       console.log(`✅ Ready to handle requests!`);
@@ -1943,17 +1926,22 @@ async function startServer() {
       console.log('  📊 Active Subscriptions (Supabase)');
       console.log('  💰 Billing & Payments (Supabase)');
       console.log('\n✨ Unified Admin Portal with Supabase database!');
+      console.log(`\n📱 FLUTTER APP CONNECTION:`);
+      console.log(`   Base URL: http://${localIP}:5000`);
+      console.log(`   Login: POST http://${localIP}:5000/api/mobile/auth/login`);
+      console.log(`   Health: GET http://${localIP}:5000/api/health`);
+      console.log(`\n💡 Update your Flutter app's API base URL to: http://${localIP}:5000`);
     });
     
-    // Also listen on ports 3000, 3001, and 3002 for frontend compatibility
+    // Also listen on ports 3000, 3001, 3002, and 5000 for frontend compatibility
     const http = require('http');
-    const additionalPorts = [3000, 3001, 3002].filter(p => p !== PORT);
+    const additionalPorts = [3000, 3001, 3002, 5000].filter(p => p !== PORT);
     
     for (const port of additionalPorts) {
       try {
         const additionalServer = http.createServer(app);
         additionalServer.listen(port, '0.0.0.0', () => {
-          console.log(`🌐 Also listening on port ${port}: http://localhost:${port}`);
+          console.log(`🌐 Also listening on port ${port}: http://${localIP}:${port}`);
         });
         additionalServer.timeout = 30000;
       } catch (err) {
