@@ -34,6 +34,24 @@ const { performanceMonitor, errorTracker, getHealthData } = require('./middlewar
 // Import services for webhook processing (moved to webhook handler to avoid circular dependencies)
 
 const app = express();
+
+// ==================================================
+// FIX STATIC IMAGE LOADING FOR ADMIN PANEL (WORKING)
+// ==================================================
+const uploadsPath = path.join(__dirname, 'uploads');
+console.log("📁 Serving uploads from:", uploadsPath);
+console.log("📂 Exists:", fs.existsSync(uploadsPath));
+
+app.use('/uploads', (req, res, next) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  if (req.method === 'OPTIONS') return res.status(200).end();
+  next();
+});
+
+app.use('/uploads', express.static(uploadsPath));
+
 const PORT = process.env.PORT || 3000;
 const NODE_ENV = process.env.NODE_ENV || 'development';
 
@@ -1604,19 +1622,119 @@ app.post("/api/portals", async (req, res) => {
 // =====================================================
 // STRIPE ROUTES (excluding webhook - already mounted above)
 // =====================================================
-// Mount other Stripe routes (webhook is already mounted above with raw body parser)
-const express2 = require('express');
-const stripeRouter = express2.Router();
-const stripeController = require('./controllers/StripeController');
 
-stripeRouter.post('/checkout-session', stripeController.createCheckoutSession);
-stripeRouter.get('/checkout-session/:sessionId', stripeController.getCheckoutSession);
-stripeRouter.post('/sync-transaction', stripeController.syncTransaction);
-stripeRouter.get('/subscription/:subscriptionId', stripeController.getSubscription);
-stripeRouter.put('/subscription/:subscriptionId', stripeController.updateSubscription);
-stripeRouter.delete('/subscription/:subscriptionId', stripeController.cancelSubscription);
+// Get all leads
+app.get('/api/admin/leads', async (req, res) => {
+  try {
+    res.status(200).json({
+      success: true,
+      data: {
+        leads: [],
+        pagination: {
+          total: 0,
+          page: 1,
+          limit: 25,
+          totalPages: 0
+        }
+      }
+    });
+  } catch (error) {
+    console.error('Error fetching leads:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch leads',
+      error: error.message
+    });
+  }
+});
 
-app.use('/api/stripe', stripeRouter);
+// Get lead statistics
+app.get('/api/admin/leads/stats', async (req, res) => {
+  try {
+    res.status(200).json({
+      success: true,
+      data: {
+        totalLeads: 0,
+        activeLeads: 0,
+        assignedLeads: 0,
+        unassignedLeads: 0
+      }
+    });
+  } catch (error) {
+    console.error('Error fetching lead stats:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch lead statistics',
+      error: error.message
+    });
+  }
+});
+
+// =====================================================
+// STATIC FILE SERVING - FRONTEND
+// =====================================================
+// Note: /uploads static serving is configured at the top of the file (after app = express())
+
+// Check if frontend directory exists
+const frontendPath = path.join(__dirname, '..', 'frontend');
+const frontendExists = fs.existsSync(frontendPath);
+
+if (frontendExists) {
+  // Serve static files from the frontend directory with no-cache headers for development
+  app.use(express.static(frontendPath, {
+    setHeaders: (res, filePath) => {
+      if (NODE_ENV === 'development') {
+        // Disable caching in development
+        res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+        res.setHeader('Pragma', 'no-cache');
+        res.setHeader('Expires', '0');
+      }
+    }
+    ,maxAge: 0, // Disable caching for development
+    etag: false
+  }));
+  console.log('✅ Frontend directory found, static files will be served');
+} else {
+  console.log('⚠️  Frontend directory not found, serving API only');
+}
+
+// =====================================================
+// FRONTEND ROUTES
+// =====================================================
+
+// Serve index.html for the root route (or API info if frontend doesn't exist)
+app.get('/', (req, res) => {
+  const indexPath = path.join(__dirname, '..', 'frontend', 'index.html');
+  if (frontendExists && fs.existsSync(indexPath)) {
+    return res.sendFile(indexPath);
+  }
+  
+  // If no frontend, return API information
+  res.status(200).json({
+    success: true,
+    message: 'Lead Marketplace API Server',
+    version: '2.0.0',
+    endpoints: {
+      health: '/api/health',
+      apiDocs: '/api',
+      portals: {
+        'GET /api/portals': 'Get all portals',
+        'POST /api/portals': 'Create new portal',
+        'PUT /api/portals/:id/status': 'Update portal status',
+        'DELETE /api/portals/:id': 'Delete portal'
+      },
+      mobile: {
+        'POST /api/v1/agencies/register': 'Register new agency',
+        'POST /api/v1/agencies/login': 'Login for agency user',
+        'GET /api/v1/agencies/profile': 'Get agency profile'
+      },
+      admin: {
+        'All admin routes are under /api/admin/*': 'Requires authentication'
+      }
+    },
+    note: 'Frontend not found. This is an API-only server.'
+  });
+});
 
 // =====================================================
 // MOBILE ROUTES
@@ -1625,6 +1743,7 @@ app.use('/api/stripe', stripeRouter);
 // Import mobile auth routes (public - registration/login)
 const mobileAuthRoutes = require('./routes/mobileAuthRoutes');
 const agencyDocumentsRoutes = require('./routes/agencyDocumentsRoutes');
+const mobileAgencyDocumentsRoutes = require('./routes/mobileAgencyDocumentsRoutes');
 
 // Import mobile routes
 const mobileRoutes = require('./routes/mobileRoutes');
@@ -1658,6 +1777,7 @@ const leadDistributionRoutes = require('./routes/leadDistributionRoutes');
 app.use('/api/v1/agencies', mobileAuthRoutes);
 // Agency document upload routes
 app.use('/api/v1/agencies', agencyDocumentsRoutes);
+app.use('/api/v1/agencies', mobileAgencyDocumentsRoutes);
 // Password Reset Routes (Forgot Password, Verify Code, Reset Password)
 const passwordResetRoutes = require('./routes/passwordResetRoutes');
 app.use('/api/mobile/auth', passwordResetRoutes);
@@ -1688,6 +1808,7 @@ app.use('/api/admin', adminSystemRoutes);
 app.use('/api/admin', adminRolesRoutes);
 app.use('/api/admin', adminLeadsRoutes);
 app.use('/api/admin', adminDocumentVerificationRoutes);
+app.use('/api/admin', agencyDocumentsRoutes);
 app.use('/api/admin', adminDocumentsRoutes);
 app.use('/api/admin', adminAgencyRoutes);
 // Register admin portals routes BEFORE other admin routes to ensure proper matching
@@ -1711,6 +1832,38 @@ app.use((req, res, next) => {
     });
   }
   next();
+});
+
+// Route to serve agency documents from Supabase Storage
+// Handles paths like /{agencyId}/{filename} for document viewing
+app.get('/:agencyId/:filename', async (req, res, next) => {
+  const { agencyId, filename } = req.params;
+  
+  // Only handle if it looks like a document request (has file extension)
+  if (!filename.match(/\.(pdf|jpg|jpeg|png|gif|doc|docx)$/i)) {
+    return next();
+  }
+
+  try {
+    const supabase = require('./config/supabaseClient');
+    const filePath = `${agencyId}/${filename}`;
+    
+    // Create signed URL for the file
+    const { data: signed, error } = await supabase.storage
+      .from('agency_documents')
+      .createSignedUrl(filePath, 3600); // 1 hour expiry
+
+    if (error || !signed) {
+      console.error('Error generating signed URL for document:', error);
+      return res.status(404).json({ success: false, message: 'Document not found' });
+    }
+
+    // Redirect to the signed URL
+    return res.redirect(signed.signedUrl);
+  } catch (err) {
+    console.error('Error serving document:', err);
+    return next();
+  }
 });
 
 // Catch-all handler for client-side routing (SPA) - Express 5.x compatible
