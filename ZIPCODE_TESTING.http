@@ -1,0 +1,157 @@
+# ZIPCODE TESTING SCRIPT
+# Use this with REST clients like Postman, Thunder Client, or curl
+
+### 1. TEST REGISTRATION WITH ZIPCODES
+POST http://localhost:5000/api/mobile/auth/register
+Content-Type: application/json
+
+{
+  "email": "test-zipcode-{{$randomInt}}@agency.com",
+  "password": "Test123!@#",
+  "agency_name": "Zipcode Test Agency",
+  "business_name": "Zipcode Test Business",
+  "zipcodes": ["90210", "10001", "60601"]
+}
+
+# Expected Response:
+# {
+#   "success": true,
+#   "token": "...",
+#   "agency_id": "uuid",
+#   "email": "test-zipcode@agency.com",
+#   "zipcodes": ["90210", "10001", "60601"],  ✅ Check this!
+#   "message": "Registration successful"
+# }
+
+###
+
+### 2. TEST LOGIN RETURNS ZIPCODES
+POST http://localhost:5000/api/mobile/auth/login
+Content-Type: application/json
+
+{
+  "email": "test-zipcode@agency.com",
+  "password": "Test123!@#"
+}
+
+# Expected Response:
+# {
+#   "success": true,
+#   "token": "...",
+#   "data": {
+#     "agency_id": "uuid",
+#     "business_name": "Zipcode Test Business",
+#     "email": "test-zipcode@agency.com",
+#     "zipcodes": ["90210", "10001", "60601"]  ✅ Check this!
+#   }
+# }
+
+###
+
+### 3. TEST PROFILE RETURNS ZIPCODES
+GET http://localhost:5000/api/v1/agencies/profile
+Authorization: Bearer {{token}}
+
+# Expected Response:
+# {
+#   "success": true,
+#   "data": {
+#     "id": "uuid",
+#     "business_name": "Zipcode Test Business",
+#     "email": "test-zipcode@agency.com",
+#     "zipcodes": ["90210", "10001", "60601"],  ✅ Check this!
+#     "subscription": null,
+#     "territories_count": 0
+#   }
+# }
+
+###
+
+### 4. TEST TERRITORIES ENDPOINT
+GET http://localhost:5000/api/mobile/territories
+Authorization: Bearer {{token}}
+
+# Expected Response:
+# {
+#   "success": true,
+#   "data": {
+#     "territories": [...],
+#     "totalCount": 0,
+#     "activeCount": 0,
+#     "limit": 0
+#   },
+#   "zipcodes": ["90210", "10001", "60601"]  ✅ Check this!
+# }
+
+###
+
+### 5. ADD TERRITORY
+POST http://localhost:5000/api/mobile/territories
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "type": "zipcode",
+  "value": "75001",
+  "zipcode": "75001",
+  "city": "Dallas",
+  "state": "TX",
+  "priority": 5
+}
+
+# Expected Response:
+# {
+#   "success": true,
+#   "message": "Territory added successfully",
+#   "data": {
+#     "id": "uuid",
+#     "type": "zipcode",
+#     "value": "75001",
+#     "zipcode": "75001",
+#     "city": "Dallas",
+#     "state": "TX",
+#     "isActive": true,
+#     "priority": 5
+#   }
+# }
+
+###
+
+### 6. VERIFY DATABASE SYNC
+# After adding territory, get profile again to verify zipcodes updated
+GET http://localhost:5000/api/v1/agencies/profile
+Authorization: Bearer {{token}}
+
+# Expected: zipcodes should now include "75001"
+# ["90210", "10001", "60601", "75001"]
+
+###
+
+# CURL EXAMPLES
+# For command line testing
+
+# 1. Registration
+curl -X POST http://localhost:5000/api/mobile/auth/register \
+  -H "Content-Type: application/json" \
+  -d '{
+    "email": "test-curl@agency.com",
+    "password": "Test123!@#",
+    "agency_name": "Curl Test Agency",
+    "zipcodes": ["90210", "10001"]
+  }'
+
+# 2. Login
+curl -X POST http://localhost:5000/api/mobile/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{
+    "email": "test-curl@agency.com",
+    "password": "Test123!@#"
+  }'
+
+# 3. Profile (replace TOKEN with actual token from login)
+curl -X GET http://localhost:5000/api/v1/agencies/profile \
+  -H "Authorization: Bearer TOKEN"
+
+# 4. Territories
+curl -X GET http://localhost:5000/api/mobile/territories \
+  -H "Authorization: Bearer TOKEN"

@@ -3,6 +3,68 @@
  * Handles mobile messaging and conversation management
  */
 
+
+const express = require('express');
+const router = express.Router();
+const supabase = require('../config/supabaseClient');
+const admin = require('../config/firebaseAdmin');
+const { authenticateAgency } = require('../middleware/agencyAuth');
+
+// 🚀 TEST PUSH NOTIFICATION
+router.post('/test-notification', authenticateAgency, async (req, res) => {
+  try {
+    const agencyId = req.agency.id;
+
+    // Fetch agency FCM token
+    const { data: agency, error } = await supabase
+      .from("agencies")
+      .select("fcm_token")
+      .eq("id", agencyId)
+      .single();
+
+    if (error || !agency || !agency.fcm_token) {
+      return res.status(400).json({
+        success: false,
+        message: "No FCM token found for this agency. Login again to refresh token."
+      });
+    }
+
+    const message = {
+      token: agency.fcm_token,
+      notification: {
+        title: "Test Notification 🎉",
+        body: "Your push notifications are working!",
+      },
+      android: {
+        priority: "high",
+      },
+      data: {
+        action: "open_app",
+        screen: "dashboard"
+      }
+    };
+
+    await admin.messaging().send(message);
+
+    return res.json({
+      success: true,
+      message: "Test notification sent successfully!"
+    });
+
+  } catch (err) {
+    console.error("❌ Test notification error:", err);
+    res.status(500).json({
+      success: false,
+      message: "Error sending test notification",
+      error: err.message
+    });
+  }
+});
+
+module.exports = router;
+
+
+
 const { MobileConversation, MobileMessage, MobileMessageTemplate, Lead, Agency, AuditLog } = require('../models');
 const { Op } = require('sequelize');
 

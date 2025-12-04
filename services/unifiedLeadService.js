@@ -25,6 +25,7 @@ class UnifiedLeadService {
       const leadData = {
         portal_id: portalId,
         portal_code: portalCode || null,
+        industry: normalized.industry || null,
         name: normalized.name || null,
         phone: normalized.phone || null,
         email: normalized.email || null,

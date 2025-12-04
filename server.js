@@ -3,13 +3,27 @@
  * Fixed version with proper error handling
  */
 
+// ✅ Load environment variables FIRST - before any other requires
+require('dotenv').config({ path: require('path').join(__dirname, 'config.env') });
+require('dotenv').config({ path: require('path').join(__dirname, '..', 'config.env') });
+require('dotenv').config(); // Also try default .env location
+
+// 🧩 Debug: Log critical environment variables at startup
+console.log('🧩 ENV CHECK → DB_HOST:', process.env.DB_HOST || 'NOT SET');
+console.log('🧩 ENV CHECK → DB_NAME:', process.env.DB_NAME || 'NOT SET');
+console.log('🧩 ENV CHECK → DB_USERNAME:', process.env.DB_USERNAME || 'NOT SET');
+console.log('🧩 ENV CHECK → DB_PASSWORD:', process.env.DB_PASSWORD ? '***SET***' : 'NOT SET');
+console.log('🧩 ENV CHECK → PORT:', process.env.PORT || 'NOT SET (using default)');
+
+
 const express = require('express');
+const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
+const StripeController = require('./controllers/StripeController');
 const cors = require('cors');
 const helmet = require('helmet');
 const morgan = require('morgan');
 const compression = require('compression');
 const rateLimit = require('express-rate-limit');
-const dotenv = require('dotenv');
 const { createClient } = require('@supabase/supabase-js');
 const { Client } = require('pg');
 const crypto = require('crypto');
@@ -19,25 +33,92 @@ const { performanceMonitor, errorTracker, getHealthData } = require('./middlewar
 
 // Import services for webhook processing (moved to webhook handler to avoid circular dependencies)
 
-// Load environment variables from config.env (try multiple locations)
-dotenv.config({ path: path.join(__dirname, 'config.env') });
-dotenv.config({ path: path.join(__dirname, '..', 'config.env') });
-dotenv.config(); // Also try default .env location
-
 const app = express();
+
+// ==================================================
+// STATIC FILE SERVING REMOVED
+// Documents are served directly from Supabase Storage
+// Backend only returns file_path for frontend to use
+// ==================================================
+
 const PORT = process.env.PORT || 3000;
 const NODE_ENV = process.env.NODE_ENV || 'development';
 
+// =====================================================
+// CRITICAL: STRIPE WEBHOOK ROUTE MUST BE FIRST
+// =====================================================
+// Stripe webhooks need raw body for signature verification
+// This MUST be mounted BEFORE ANY body parsing middleware
+console.log('🔧 Mounting Stripe webhook route at /api/stripe/webhook');
+app.post('/api/stripe/webhook',
+  express.raw({ type: 'application/json' }),
+  (req, res, next) => {
+    console.log('🔔 Webhook request received at:', new Date().toISOString());
+    console.log('🔔 Body type:', typeof req.body);
+    console.log('🔔 Is Buffer:', Buffer.isBuffer(req.body));
+    console.log('🔔 Signature header:', req.headers['stripe-signature'] ? 'Present' : 'Missing');
+    next();
+  },
+  StripeController.handleWebhook
+);
 
-app.listen(PORT, "0.0.0.0", () => {
-  console.log(`✅ Server running on port ${PORT}`);
-});
+app.use(cors({
+  origin: "*",          // allow all localhost/web clients
+  methods: "GET,POST,PUT,DELETE,OPTIONS",
+  allowedHeaders: "Content-Type, Authorization"
+}));
 
+app.options(/.*/, cors());
+
+app.use('/api/mobile/messaging', require('./controllers/mobileMessagingController'));
+
+
+app.use("/api/mobile", require("./routes/mobileNotificationsRoutes"));
+
+
+
+// ✅ CORS Configuration - Allow all origins for Flutter frontend compatibility
+app.use(cors({
+  origin: '*', // allow all origins for now; later restrict if needed
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin', 'x-api-key']
+}));
+console.log('✅ CORS enabled for all origins');
 
 console.log('🚀 Starting Lead Marketplace Unified Server...');
 console.log(`📝 Environment: ${NODE_ENV}`);
 console.log(`🔑 JWT Secret loaded: ${process.env.JWT_SECRET ? 'Yes' : 'No'}`);
 console.log(`🔐 Demo token enabled: ${NODE_ENV === 'development' ? 'Yes' : 'No'}`);
+
+// ✅ CORS Setup for Webhooks - Allow ALL origins for webhook routes (authenticated via API key)
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+
+  // Allow all origins for webhook endpoints (they're protected by API key)
+  if (req.path.startsWith('/api/webhooks/')) {
+    res.setHeader('Access-Control-Allow-Origin', origin || '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, x-api-key, Authorization');
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
+
+    if (req.method === 'OPTIONS') {
+      return res.sendStatus(204);
+    }
+  }
+
+  next();
+});
+// ==========================================================
+// 🌐 General CORS Configuration (for all API routes)
+// ==========================================================
+// NOTE: CORS is already configured above (line 32-37) to allow all origins
+// The simple configuration above handles all CORS requirements
+
+
+
+// Parse incoming requests
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 
 // =====================================================
 // MIDDLEWARE SETUP
@@ -114,70 +195,25 @@ app.use((req, res, next) => {
   next();
 });
 
-app.use(cors({
-  origin: function (origin, callback) {
-    // Allow requests with no origin (like mobile apps or curl requests)
-    if (!origin) return callback(null, true);
-    
-    // Build allowed origins list from environment variables
-    const allowedOrigins = [];
-    
-    // Add FRONTEND_URL if provided
-    if (process.env.FRONTEND_URL) {
-      allowedOrigins.push(process.env.FRONTEND_URL);
-    }
-    
-    // Add BASE_URL if provided (and different from FRONTEND_URL)
-    if (process.env.BASE_URL && process.env.BASE_URL !== process.env.FRONTEND_URL) {
-      allowedOrigins.push(process.env.BASE_URL);
-    }
-    
-    // Add ALLOWED_ORIGINS if provided (comma-separated list)
-    if (process.env.ALLOWED_ORIGINS) {
-      const origins = process.env.ALLOWED_ORIGINS.split(',').map(url => url.trim());
-      allowedOrigins.push(...origins);
-    }
-    
-    // In development, allow localhost on any port
-    if (NODE_ENV === 'development') {
-      // Allow localhost on any port (including 8080)
-      if (origin.match(/^https?:\/\/localhost(:\d+)?$/)) {
-        return callback(null, true);
-      }
-      if (origin.match(/^https?:\/\/127\.0\.0\.1(:\d+)?$/)) {
-        return callback(null, true);
-      }
-      // Explicitly allow common development ports
-      if (origin === 'http://localhost:8080' || origin === 'http://localhost:3002' || origin === 'http://localhost:3000') {
-        return callback(null, true);
-      }
-    }
-    
-    if (allowedOrigins.includes(origin)) {
-      return callback(null, true);
-    }
-    
-    callback(new Error('Not allowed by CORS'));
-  },
-  credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
-  allowedHeaders: [
-    'Content-Type', 
-    'Authorization', 
-    'X-Requested-With', 
-    'Accept', 
-    'Origin',
-    'X-API-Key',
-    'x-api-key',
-    'X-Api-Key',
-    'x-apikey'
-  ],
-  exposedHeaders: ['Content-Length', 'X-Foo', 'X-Bar'],
-  optionsSuccessStatus: 200, // some legacy browsers (IE11, various SmartTVs) choke on 204
-  preflightContinue: false // Don't continue to next middleware after handling OPTIONS
-}));
+// NOTE: CORS is already configured at the top (line 32-37) to allow all origins
+// This duplicate configuration has been removed to avoid conflicts
 
-// OPTIONS requests are already handled by the middleware above (before CORS)
+// Handle preflight OPTIONS requests for non-webhook routes (Express 5.x compatible)
+app.use((req, res, next) => {
+  // Webhook OPTIONS already handled by earlier middleware
+  if (req.path.startsWith('/api/webhooks/')) {
+    return next();
+  }
+
+  if (req.method === 'OPTIONS') {
+    res.header('Access-Control-Allow-Origin', req.headers.origin || '*');
+    res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS, PATCH');
+    res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept, Origin, x-api-key');
+    res.header('Access-Control-Allow-Credentials', 'true');
+    return res.sendStatus(200);
+  }
+  next();
+});
 
 // Rate limiting
 const limiter = rateLimit({
@@ -212,6 +248,7 @@ app.use(performanceMonitor);
 
 // Trust proxy (for rate limiting behind reverse proxy)
 app.set('trust proxy', 1);
+
 
 // =====================================================
 // DATABASE CONNECTIONS
@@ -439,6 +476,7 @@ app.get('/api/proxy', async (req, res) => {
     }
     
     console.log(`✅ Proxy request for allowed host: ${urlObj.hostname}`);
+    console.log(`📤 Fetching URL: ${url}`);
 
     // Get custom headers from query params (for API keys, etc.)
     const headers = {
@@ -462,26 +500,119 @@ app.get('/api/proxy', async (req, res) => {
       headers['X-API-Key'] = req.query.apiKey;
     }
 
-    // Fetch the external resource using built-in fetch (Node.js 18+)
-    const response = await fetch(url, {
-      headers: headers
-    });
+    console.log(`📋 Request headers:`, headers);
 
-    // Get response text first
-    const data = await response.text();
-    const contentType = response.headers.get('content-type') || '';
+    // Fetch the external resource using built-in fetch (Node.js 18+)
+    // If fetch is not available, use https module as fallback
+    let response;
+    let responseData;
+    let responseContentType;
+    
+    try {
+      // Check if fetch is available (Node.js 18+)
+      if (typeof fetch === 'undefined') {
+        // Fallback to https module for older Node.js versions
+        const https = require('https');
+        const http = require('http');
+        const urlModule = require('url');
+        
+        const parsedUrl = urlModule.parse(url);
+        const client = parsedUrl.protocol === 'https:' ? https : http;
+        
+        const options = {
+          hostname: parsedUrl.hostname,
+          port: parsedUrl.port || (parsedUrl.protocol === 'https:' ? 443 : 80),
+          path: parsedUrl.path,
+          method: 'GET',
+          headers: headers
+        };
+        
+        // Use Promise to handle the request
+        responseData = await new Promise((resolve, reject) => {
+          const req = client.request(options, (httpRes) => {
+            responseContentType = httpRes.headers['content-type'] || '';
+            let data = '';
+            
+            httpRes.on('data', (chunk) => { data += chunk; });
+            httpRes.on('end', () => {
+              if (!httpRes.statusCode || httpRes.statusCode >= 400) {
+                reject(new Error(`HTTP ${httpRes.statusCode}: ${httpRes.statusMessage || 'Request failed'}`));
+              } else {
+                resolve(data);
+              }
+            });
+          });
+          
+          req.on('error', (err) => {
+            console.error('❌ HTTP request error:', err);
+            reject(new Error(`Failed to fetch ${url}: ${err.message}`));
+          });
+          
+          req.setTimeout(30000, () => {
+            req.destroy();
+            reject(new Error(`Request timeout for ${url}`));
+          });
+          
+          req.end();
+        });
+        
+        // Parse JSON if content type indicates JSON
+        let parsedData;
+        if (responseContentType.includes('application/json')) {
+          try {
+            parsedData = JSON.parse(responseData);
+          } catch (e) {
+            parsedData = responseData;
+          }
+        } else {
+          // Try to parse as JSON anyway
+          try {
+            parsedData = JSON.parse(responseData);
+          } catch (e) {
+            parsedData = responseData;
+          }
+        }
+        
+        return res.json({
+          success: true,
+          data: parsedData,
+          contentType: responseContentType
+        });
+      }
+      
+      // Use built-in fetch (Node.js 18+)
+      response = await fetch(url, {
+        headers: headers,
+        method: 'GET'
+      });
+      console.log(`✅ Fetch successful, status: ${response.status}`);
+      
+      // Get response text
+      responseData = await response.text();
+      responseContentType = response.headers.get('content-type') || '';
+      
+    } catch (fetchError) {
+      console.error('❌ Fetch error details:', {
+        message: fetchError.message,
+        code: fetchError.code,
+        errno: fetchError.errno,
+        syscall: fetchError.syscall,
+        stack: fetchError.stack
+      });
+      throw new Error(`Failed to fetch ${url}: ${fetchError.message}`);
+    }
 
     // If the external API returned an error, pass it through with proper status
     if (!response.ok) {
       // Try to parse error message from response
       let errorMessage = `HTTP ${response.status}: ${response.statusText}`;
       try {
-        const errorData = JSON.parse(data);
+        const errorData = JSON.parse(responseData);
         errorMessage = errorData.message || errorData.error || errorMessage;
       } catch (e) {
         // If not JSON, use the text or default message
-        if (data && data.length < 500) {
-          errorMessage = data;
+        if (responseData && responseData.length < 500) {
+          errorMessage = responseData;
         }
       }
 
@@ -495,9 +626,9 @@ app.get('/api/proxy', async (req, res) => {
 
     // Parse JSON if content type indicates JSON, otherwise return as text
     let parsedData;
-    if (contentType.includes('application/json') || contentType.includes('application/schema+json')) {
+    if (responseContentType.includes('application/json') || responseContentType.includes('application/schema+json')) {
       try {
-        parsedData = JSON.parse(data);
+        parsedData = JSON.parse(responseData);
         console.log(`✅ Parsed JSON response, type: ${typeof parsedData}, isArray: ${Array.isArray(parsedData)}`);
         if (parsedData && typeof parsedData === 'object') {
           console.log(`✅ Response has properties: ${!!parsedData.properties}, properties count: ${parsedData.properties ? Object.keys(parsedData.properties).length : 0}`);
@@ -505,49 +636,62 @@ app.get('/api/proxy', async (req, res) => {
       } catch (e) {
         console.warn('⚠️ JSON parsing failed, returning as text:', e.message);
         // If JSON parsing fails, return as text
-        parsedData = data;
+        parsedData = responseData;
       }
     } else {
       // Try to parse as JSON anyway (some APIs don't set content-type correctly)
       try {
-        parsedData = JSON.parse(data);
-        console.log(`✅ Parsed JSON despite content-type (${contentType})`);
+        parsedData = JSON.parse(responseData);
+        console.log(`✅ Parsed JSON despite content-type (${responseContentType})`);
       } catch (e) {
-        parsedData = data;
+        parsedData = responseData;
       }
     }
     
     res.json({
       success: true,
       data: parsedData,
-      contentType: contentType
+      contentType: responseContentType
     });
 
   } catch (error) {
     console.error('❌ Proxy error:', error);
+    console.error('❌ Error details:', {
+      message: error.message,
+      code: error.code,
+      name: error.name,
+      stack: error.stack
+    });
     res.status(500).json({
       success: false,
-      message: error.message || 'Failed to fetch external resource'
+      message: error.message || 'Failed to fetch external resource',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
 });
 
-// Health check endpoint (with metrics from observability)
+// Health check endpoint (simple and reliable - critical for Flutter app discovery)
 app.get('/api/health', (req, res) => {
-  const baseHealth = {
-    success: true,
-    message: 'Unified Lead Marketplace Server is healthy',
-    timestamp: new Date().toISOString(),
-    uptime: process.uptime(),
-    environment: NODE_ENV,
-    services: {
-      supabase: supabase ? 'connected' : 'disconnected'
-    }
-  };
-  
-  // Merge with observability health check if available
-  const observabilityHealth = getHealthData();
-  res.status(200).json({ ...baseHealth, ...observabilityHealth });
+  try {
+    res.status(200).json({
+      success: true,
+      status: 'ok',
+      message: 'Server is running and ready',
+      timestamp: new Date().toISOString(),
+      uptime: process.uptime(),
+      environment: NODE_ENV || 'development',
+      port: PORT || 3000
+    });
+  } catch (error) {
+    // Fallback response if anything fails
+    console.error('Health check error:', error);
+    res.status(200).json({
+      success: true,
+      status: 'ok',
+      message: 'Server is running',
+      timestamp: new Date().toISOString()
+    });
+  }
 });
 
 // Metrics endpoint (for monitoring)
@@ -930,6 +1074,11 @@ app.get('/api', (req, res) => {
     }
   });
 });
+// =====================================================
+// SUPER ADMIN AUTH ROUTES (JWT + Forgot Password)
+// =====================================================
+const superAdminAuthRoutes = require('./routes/superadminAuthRoutes');
+app.use('/api/superadmin/auth', superAdminAuthRoutes);
 
 // =====================================================
 // PORTAL REGISTRY API (Supabase)
@@ -1459,457 +1608,8 @@ app.post("/api/portals", async (req, res) => {
   }
 });
 
-
-
-
-/**
- * POST /api/leads/:portalId
- * Unified endpoint to receive lead data from any portal
- * Normalizes different schemas into common fields
- */
-app.post('/api/leads/:portalId', async (req, res) => {
-  try {
-    const { portalId } = req.params;
-    const payload = req.body;
-
-    // Import unified lead service
-    const unifiedLeadService = require('./services/unifiedLeadService');
-    const schemaMappingService = require('./services/schemaMappingService');
-
-    console.log(`📥 Received lead data from portal: ${portalId}`);
-    console.log('📦 Payload:', JSON.stringify(payload, null, 2));
-
-    // Optional: Get portal code from database if needed
-    let portalCode = null;
-    try {
-      const { data: portal } = await supabase
-        .from('portals')
-        .select('portal_code')
-        .eq('id', portalId)
-        .single();
-      if (portal) {
-        portalCode = portal.portal_code;
-      }
-    } catch (err) {
-      console.warn('⚠️ Could not fetch portal code, using portalId as code');
-      portalCode = portalId;
-    }
-
-    // Optional: Get custom mapping for this portal (future enhancement)
-    // For now, use default mappings
-    const customMapping = null;
-
-    // Create unified lead
-    const result = await unifiedLeadService.createLead(payload, portalId, portalCode, customMapping);
-
-    console.log('✅ Unified lead created:', result.id);
-
-    return res.status(201).json({
-      success: true,
-      message: 'Lead created successfully',
-      data: {
-        lead_id: result.id,
-        lead: result.lead
-      }
-    });
-  } catch (error) {
-    console.error('❌ Error creating unified lead:', error);
-    return res.status(400).json({
-      success: false,
-      message: error.message || 'Failed to create lead',
-      error: process.env.NODE_ENV === 'development' ? error.stack : undefined
-    });
-  }
-});
-
-/**
- * GET /api/leads
- * Get all leads with optional filtering
- */
-app.get('/api/leads', async (req, res) => {
-  try {
-    const unifiedLeadService = require('./services/unifiedLeadService');
-    
-    const filters = {
-      portal_id: req.query.portal_id,
-      portal_code: req.query.portal_code,
-      name: req.query.name,
-      phone: req.query.phone,
-      email: req.query.email,
-      city: req.query.city,
-      state: req.query.state,
-      zipcode: req.query.zipcode,
-      start_date: req.query.start_date,
-      end_date: req.query.end_date,
-      limit: parseInt(req.query.limit) || 100
-    };
-
-    // Remove undefined filters
-    Object.keys(filters).forEach(key => {
-      if (filters[key] === undefined) {
-        delete filters[key];
-      }
-    });
-
-    const result = await unifiedLeadService.getLeads(filters);
-
-    return res.json({
-      success: true,
-      count: result.count,
-      leads: result.leads
-    });
-  } catch (error) {
-    console.error('❌ Error fetching leads:', error);
-    return res.status(500).json({
-      success: false,
-      message: error.message || 'Failed to fetch leads'
-    });
-  }
-});
-
-/**
- * GET /api/leads/:id
- * Get a specific lead by ID
- */
-app.get('/api/leads/:id', async (req, res) => {
-  try {
-    const unifiedLeadService = require('./services/unifiedLeadService');
-    const leadId = parseInt(req.params.id);
-
-    if (isNaN(leadId)) {
-      return res.status(400).json({
-        success: false,
-        message: 'Invalid lead ID'
-      });
-    }
-
-    const result = await unifiedLeadService.getLeadById(leadId);
-
-    return res.json({
-      success: true,
-      lead: result.lead
-    });
-  } catch (error) {
-    console.error('❌ Error fetching lead:', error);
-    if (error.message === 'Lead not found') {
-      return res.status(404).json({
-        success: false,
-        message: 'Lead not found'
-      });
-    }
-    return res.status(500).json({
-      success: false,
-      message: error.message || 'Failed to fetch lead'
-    });
-  }
-});
-
-app.post('/api/webhooks/:portal_code', async (req, res) => {
-  // Import services dynamically to avoid circular dependencies
-  const leadIngestionService = require('./services/leadIngestionService');
-  const leadDistributionService = require('./services/leadDistributionService');
-  const auditService = require('./services/auditService');
-
-  const { portal_code } = req.params;
-  // Read API key from either header format (case-insensitive)
-  // Try multiple variations to handle different client implementations
-  const apiKey = req.headers['x-api-key'] || 
-                 req.headers['X-API-Key'] || 
-                 req.headers['x-apikey'] || 
-                 req.headers['X-Api-Key'] ||
-                 req.headers['x_api_key'] ||
-                 req.headers['X_API_KEY'];
-  
-  const startTime = Date.now();
-
-  // Log which header format was used (for debugging)
-  const usedHeader = req.headers['x-api-key'] ? 'x-api-key' :
-                     req.headers['X-API-Key'] ? 'X-API-Key' :
-                     req.headers['x-apikey'] ? 'x-apikey' :
-                     req.headers['X-Api-Key'] ? 'X-Api-Key' :
-                     req.headers['x_api_key'] ? 'x_api_key' :
-                     req.headers['X_API_KEY'] ? 'X_API_KEY' : 'none';
-
-  try {
-    // Step 1: Authenticate webhook (00:00.150)
-    if (!apiKey) {
-      console.log('❌ Webhook authentication failed - Missing API key');
-      console.log('   Available headers:', Object.keys(req.headers).filter(h => h.toLowerCase().includes('api')));
-      await auditService.logWebhook(null, portal_code, req.body, 'failed', 'Missing API key');
-      return res.status(401).json({ success: false, message: 'Missing API key' });
-    }
-    
-    console.log(`✅ API key found in header: ${usedHeader}`);
-
-    const { data: portal, error: portalError } = await supabase
-      .from('portals')
-      .select('id, portal_name, industry, portal_status, portal_code, api_key')
-      .eq('portal_code', portal_code)
-      .eq('api_key', apiKey)
-      .single();
-    
-    console.log('🔍 Webhook authentication:', {
-      portal_code,
-      has_api_key: !!apiKey,
-      portal_found: !!portal,
-      portal_id: portal?.id,
-      portal_status: portal?.portal_status
-    });
-
-    if (portalError || !portal) {
-      await auditService.logWebhook(null, portal_code, req.body, 'failed', 'Invalid API key or portal');
-      return res.status(403).json({ success: false, message: 'Invalid API key or portal' });
-    }
-
-    if (portal.portal_status !== 'active') {
-      await auditService.logWebhook(portal.id, portal_code, req.body, 'failed', 'Portal is not active');
-      return res.status(403).json({ success: false, message: 'Portal is not active' });
-    }
-
-    // Step 2: Log webhook reception (00:00.200)
-    await auditService.logWebhook(portal.id, portal_code, req.body, 'success', 'Webhook received');
-
-    // Step 3: Log received payload
-    console.log('📦 Raw webhook payload:', JSON.stringify(req.body, null, 2));
-    console.log('📦 Received fields:', Object.keys(req.body));
-
-    // Step 4: Process lead ingestion (create lead in unified_leads table) (00:00.450)
-    // Note: unifiedLeadService handles normalization and doesn't require strict validation
-    // It accepts any fields and maps them to common fields automatically
-    // Use unified lead service to store in unified_leads table
-    const unifiedLeadService = require('./services/unifiedLeadService');
-    const leadIdGenerator = require('./utils/leadIdGenerator');
-    
-    try {
-      // Convert portal UUID to string for unified_leads table (which uses VARCHAR)
-      const portalIdStr = portal.id.toString();
-      
-      // Create lead in unified_leads table
-      const unifiedLeadResult = await unifiedLeadService.createLead(
-        req.body,  // Raw payload - will be normalized by schema mapping
-        portalIdStr,
-        portal.portal_code || portal_code,
-        null  // No custom mapping for now
-      );
-
-      if (!unifiedLeadResult.success) {
-        throw new Error(unifiedLeadResult.message || 'Failed to create unified lead');
-      }
-
-      const leadId = unifiedLeadResult.id;
-      console.log('✅ Unified lead created:', leadId);
-
-      // Generate unique sequential lead ID (e.g., LEAD-00008)
-      const uniqueLeadId = await leadIdGenerator.generateNextLeadId();
-      console.log('✅ Generated unique lead ID:', uniqueLeadId);
-
-      // Prepare lead data for audit_logs table
-      const leadDataForAudit = {
-        id: unifiedLeadResult.lead.id || leadId,
-        email: unifiedLeadResult.lead.email || req.body.email || null,
-        needs: req.body.needs || req.body.care_need || req.body.careNeed || null,
-        source: req.body.source || portal.portal_name || 'webhook',
-        status: 'pending',
-        lead_id: uniqueLeadId,
-        timeline: req.body.timeline || null,
-        lead_name: unifiedLeadResult.lead.name || req.body.name || req.body.lead_name || null,
-        portal_id: portal.id,
-        created_at: new Date().toISOString(),
-        raw_payload: req.body,
-        budget_range: req.body.budget_range || null,
-        phone_number: unifiedLeadResult.lead.phone || req.body.phone || null,
-        property_type: req.body.property_type || null,
-        additional_details: req.body.additional_details || null,
-        preferred_location: req.body.preferred_location || null
-      };
-
-      // Save to audit_logs table with unique lead ID
-      const { data: auditLogData, error: auditLogError } = await supabase
-        .from('audit_logs')
-        .insert([{
-          lead_id: uniqueLeadId,
-          lead_data: leadDataForAudit,
-          agency_id: null,
-          time_stamp: new Date().toISOString(),
-          action_status: 'created'
-        }])
-        .select()
-        .single();
-
-      if (auditLogError) {
-        console.error('❌ Error saving to audit_logs:', auditLogError);
-        // Don't fail the request, just log the error
-      } else {
-        console.log('✅ Saved to audit_logs with unique ID:', uniqueLeadId);
-      }
-
-      // Log lead creation (to admin_activity_logs)
-      await auditService.log({
-        action: 'lead_created',
-        resource_type: 'lead',
-        resource_id: uniqueLeadId, // Use the unique sequential ID
-        metadata: { 
-          portal_id: portal.id, 
-          portal_code: portal_code,
-          lead_data: unifiedLeadResult.lead,
-          unique_lead_id: uniqueLeadId
-        },
-        status: 'success',
-        message: 'Lead created in unified_leads table'
-      });
-
-      // Step 6: Return success response
-      // Note: Lead distribution can be added later if needed for unified_leads
-      const processingTime = Date.now() - startTime;
-      
-      return res.status(200).json({
-        success: true,
-        message: 'Lead received successfully and stored in unified_leads',
-        data: {
-          lead_id: leadId,
-          unique_lead_id: uniqueLeadId, // Include the sequential unique ID
-          lead: unifiedLeadResult.lead,
-          processing_time_ms: processingTime
-        }
-      });
-
-    } catch (error) {
-      console.error('❌ Error creating unified lead:', error);
-      await auditService.log({
-        action: 'lead_creation_failed',
-        resource_type: 'lead',
-        resource_id: null,
-        metadata: { 
-          portal_id: portal.id, 
-          portal_code: portal_code,
-          reason: error.message,
-          received_fields: Object.keys(req.body)
-        },
-        status: 'failed',
-        message: 'Failed to create unified lead'
-      });
-      return res.status(400).json({
-        success: false,
-        message: error.message || 'Failed to create unified lead',
-        errors: []
-      });
-    }
-  } catch (error) {
-    console.error('❌ Webhook processing error:', error);
-    await auditService.log({
-      action: 'webhook_processing_error',
-      resource_type: 'webhook',
-      resource_id: null,
-      metadata: { portal_code, error: error.message },
-      status: 'failed',
-      message: error.message
-    });
-
-    return res.status(500).json({
-      success: false,
-      message: 'Internal server error processing webhook',
-      error: process.env.NODE_ENV === 'development' ? error.message : undefined
-    });
-  }
-});
-
-
-
-
-
-
-// Update portal status
-app.put("/api/portals/:id/status", async (req, res) => {
-  try {
-    if (!supabase) {
-      return res.status(503).json({
-        success: false,
-        message: "Supabase connection not available"
-      });
-    }
-
-    const { id } = req.params;
-    const { status } = req.body;
-
-    if (!status || !['active', 'inactive', 'maintenance'].includes(status)) {
-      return res.status(400).json({
-        success: false,
-        message: "Invalid status. Must be 'active', 'inactive', or 'maintenance'"
-      });
-    }
-
-    const { data, error } = await supabase
-      .from("portals")
-      .update({ portal_status: status })
-      .eq("id", id)
-      .select();
-
-    if (error) throw error;
-
-    if (!data || data.length === 0) {
-      return res.status(404).json({
-        success: false,
-        message: "Portal not found"
-      });
-    }
-
-    res.status(200).json({
-      success: true,
-      message: `Portal status updated to ${status}`,
-      data: data[0]
-    });
-  } catch (err) {
-    console.error("❌ Error updating portal status:", err);
-    res.status(500).json({ 
-      success: false, 
-      message: err.message || "Internal server error" 
-    });
-  }
-});
-
-// Delete portal
-app.delete("/api/portals/:id", async (req, res) => {
-  try {
-    if (!supabase) {
-      return res.status(503).json({
-        success: false,
-        message: "Supabase connection not available"
-      });
-    }
-
-    const { id } = req.params;
-
-    const { data, error } = await supabase
-      .from("portals")
-      .delete()
-      .eq("id", id)
-      .select();
-
-    if (error) throw error;
-
-    if (!data || data.length === 0) {
-      return res.status(404).json({
-        success: false,
-        message: "Portal not found"
-      });
-    }
-
-    res.status(200).json({
-      success: true,
-      message: "Portal deleted successfully",
-      data: data[0]
-    });
-  } catch (err) {
-    console.error("❌ Error deleting portal:", err);
-    res.status(500).json({ 
-      success: false, 
-      message: err.message || "Internal server error" 
-    });
-  }
-});
-
 // =====================================================
-// LEADS API
+// STRIPE ROUTES (excluding webhook - already mounted above)
 // =====================================================
 
 // Get all leads
@@ -1960,8 +1660,9 @@ app.get('/api/admin/leads/stats', async (req, res) => {
 });
 
 // =====================================================
-// STATIC FILE SERVING
+// STATIC FILE SERVING - FRONTEND
 // =====================================================
+// Note: /uploads static serving is configured at the top of the file (after app = express())
 
 // Check if frontend directory exists
 const frontendPath = path.join(__dirname, '..', 'frontend');
@@ -2030,6 +1731,8 @@ app.get('/', (req, res) => {
 
 // Import mobile auth routes (public - registration/login)
 const mobileAuthRoutes = require('./routes/mobileAuthRoutes');
+const agencyDocumentsRoutes = require('./routes/agencyDocumentsRoutes');
+const mobileAgencyDocumentsRoutes = require('./routes/mobileAgencyDocumentsRoutes');
 
 // Import mobile routes
 const mobileRoutes = require('./routes/mobileRoutes');
@@ -2053,12 +1756,24 @@ const adminRolesRoutes = require('./routes/adminRolesRoutes');
 const adminEnhancedSubscriptionsRoutes = require('./routes/adminEnhancedSubscriptionsRoutes');
 const adminLeadsRoutes = require('./routes/adminLeadsRoutes');
 const adminDocumentVerificationRoutes = require('./routes/adminDocumentVerificationRoutes');
+const adminDocumentsRoutes = require('./routes/adminDocumentsRoutes');
+const adminAgencyRoutes = require('./routes/adminAgencyRoutes');
 const adminPortalsRoutes = require('./routes/adminPortalsRoutes');
 const adminWebhooksRoutes = require('./routes/adminWebhooksRoutes');
 const leadDistributionRoutes = require('./routes/leadDistributionRoutes');
 
 // Apply mobile auth routes (PUBLIC - no authentication required)
 app.use('/api/v1/agencies', mobileAuthRoutes);
+// Agency document upload routes
+app.use('/api/v1/agencies', agencyDocumentsRoutes);
+app.use('/api/v1/agencies', mobileAgencyDocumentsRoutes);
+// Password Reset Routes (Forgot Password, Verify Code, Reset Password)
+const passwordResetRoutes = require('./routes/passwordResetRoutes');
+app.use('/api/mobile/auth', passwordResetRoutes);
+
+// Registration Email Verification Routes (Send Code, Verify Code)
+const registerEmailRoutes = require('./routes/registerEmailRoutes');
+app.use('/api/mobile/auth', registerEmailRoutes);
 
 // Apply mobile routes
 app.use('/api/mobile', mobileRoutes);
@@ -2086,6 +1801,9 @@ app.use('/api/admin', adminSystemRoutes);
 app.use('/api/admin', adminRolesRoutes);
 app.use('/api/admin', adminLeadsRoutes);
 app.use('/api/admin', adminDocumentVerificationRoutes);
+app.use('/api/admin', agencyDocumentsRoutes);
+app.use('/api/admin', adminDocumentsRoutes);
+app.use('/api/admin', adminAgencyRoutes);
 // Register admin portals routes BEFORE other admin routes to ensure proper matching
 app.use('/api/admin', adminPortalsRoutes);
 app.use('/api/admin', adminWebhooksRoutes);
@@ -2096,6 +1814,7 @@ const metricsRoutes = require('./routes/metricsRoutes');
 app.use('/api', metricsRoutes);
 
 // 404 handler for API routes (Express 5.x compatible)
+// IMPORTANT: This must come AFTER static file serving
 app.use((req, res, next) => {
   if (req.path.startsWith('/api/')) {
     return res.status(404).json({
@@ -2108,9 +1827,16 @@ app.use((req, res, next) => {
   next();
 });
 
+// Document serving route removed - frontend should use file_path from API responses
+// to load documents directly from Supabase Storage
+
 // Catch-all handler for client-side routing (SPA) - Express 5.x compatible
 app.use((req, res, next) => {
-  // Only handle GET requests that aren't API routes
+  // Skip API routes
+  if (req.path.startsWith('/api')) {
+    return next();
+  }
+  // Only handle GET requests that aren't API routes or static files
   if (req.method === 'GET' && !req.path.startsWith('/api')) {
     const indexPath = path.join(__dirname, '..', 'frontend', 'index.html');
     if (frontendExists && fs.existsSync(indexPath)) {
@@ -2152,16 +1878,45 @@ app.use(ErrorHandler.notFound);
 // SERVER STARTUP
 // =====================================================
 
+// Helper function to get local IP address
+function getLocalIPAddress() {
+  const os = require('os');
+  const interfaces = os.networkInterfaces();
+  for (const name of Object.keys(interfaces)) {
+    for (const iface of interfaces[name]) {
+      // Skip internal (loopback) and non-IPv4 addresses
+      if (iface.family === 'IPv4' && !iface.internal) {
+        return iface.address;
+      }
+    }
+  }
+  return 'localhost';
+}
+
 // Start server
 async function startServer() {
   try {
-    // Start server
-    const server = app.listen(PORT, () => {
+    // Check Supabase connection
+    let supabaseStatus = 'Disconnected';
+    try {
+      const supabaseClient = require('./config/supabaseClient');
+      supabaseStatus = 'Connected';
+    } catch (err) {
+      console.warn('⚠️ Supabase client initialization warning:', err.message);
+    }
+
+    // Get local IP address for network access
+    const localIP = getLocalIPAddress();
+
+    // Start server on primary port - listen on 0.0.0.0 to allow network access
+    const server = app.listen(PORT, '0.0.0.0', () => {
       console.log('\n🚀 Lead Marketplace Unified Server running!');
-      console.log(`🌐 Frontend: http://localhost:${PORT}`);
-      console.log(`🔗 Health check: http://localhost:${PORT}/api/health`);
+      console.log(`✅ Server running on port ${PORT} (accessible from network)`);
+      console.log(`🌐 Local: http://localhost:${PORT}`);
+      console.log(`🌐 Network: http://${localIP}:${PORT}`);
+      console.log(`🔗 Health check: http://${localIP}:${PORT}/api/health`);
       console.log(`📚 API Documentation: http://localhost:${PORT}/api`);
-      console.log(`📊 Supabase: ${supabase ? 'Connected' : 'Disconnected'}`);
+      console.log(`📊 Supabase: ${supabaseStatus}`);
       console.log(`✅ Ready to handle requests!`);
       console.log('\n📋 Available Features:');
       console.log('  🏢 Portal Registry (Supabase)');
@@ -2171,7 +1926,28 @@ async function startServer() {
       console.log('  📊 Active Subscriptions (Supabase)');
       console.log('  💰 Billing & Payments (Supabase)');
       console.log('\n✨ Unified Admin Portal with Supabase database!');
+      console.log(`\n📱 FLUTTER APP CONNECTION:`);
+      console.log(`   Base URL: http://${localIP}:5000`);
+      console.log(`   Login: POST http://${localIP}:5000/api/mobile/auth/login`);
+      console.log(`   Health: GET http://${localIP}:5000/api/health`);
+      console.log(`\n💡 Update your Flutter app's API base URL to: http://${localIP}:5000`);
     });
+    
+    // Also listen on ports 3000, 3001, 3002, and 5000 for frontend compatibility
+    const http = require('http');
+    const additionalPorts = [3000, 3001, 3002, 5000].filter(p => p !== PORT);
+    
+    for (const port of additionalPorts) {
+      try {
+        const additionalServer = http.createServer(app);
+        additionalServer.listen(port, '0.0.0.0', () => {
+          console.log(`🌐 Also listening on port ${port}: http://${localIP}:${port}`);
+        });
+        additionalServer.timeout = 30000;
+      } catch (err) {
+        console.warn(`⚠️ Could not start server on port ${port}:`, err.message);
+      }
+    }
     
     // Set server timeout
     server.timeout = 30000; // 30 seconds
@@ -2200,9 +1976,24 @@ async function startServer() {
   }
 }
 
+// Handle unhandled promise rejections
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('❌ Unhandled Rejection at:', promise, 'reason:', reason);
+  // Don't exit the process, just log the error
+});
+
+// Handle uncaught exceptions
+process.on('uncaughtException', (error) => {
+  console.error('❌ Uncaught Exception:', error);
+  // Don't exit immediately, let the server try to handle it
+});
+
 // Start the server
 if (require.main === module) {
-  startServer();
+  startServer().catch((error) => {
+    console.error('❌ Failed to start server:', error);
+    process.exit(1);
+  });
 }
 
 module.exports = app;

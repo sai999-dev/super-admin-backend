@@ -4,6 +4,9 @@
  * These endpoints do NOT require authentication
  */
 
+
+
+
 const express = require('express');
 const router = express.Router();
 const bcrypt = require('bcryptjs');
@@ -708,7 +711,12 @@ router.post('/login', async (req, res) => {
       .eq('is_active', true);
 
   // Generate JWT token
-    const token = generateToken(normalizedAgency.id, normalizedAgency.email, normalizedAgency.business_name);
+   const token = generateAgencyToken({
+  id: normalizedAgency.id,
+  email: normalizedAgency.email,
+  businessName: normalizedAgency.business_name
+});
+
 
     res.json({
       success: true,
@@ -827,7 +835,12 @@ router.post('/verify-email', async (req, res) => {
     if (updateError) throw updateError;
 
     // Generate JWT token
-    const token = generateToken(normalizedAgency.id, normalizedAgency.email, normalizedAgency.business_name);
+   const token = generateAgencyToken({
+  id: normalizedAgency.id,
+  email: normalizedAgency.email,
+  businessName: normalizedAgency.business_name
+});
+
 
     res.json({
       success: true,
@@ -997,6 +1010,7 @@ router.get('/profile', authenticateAgency, async (req, res) => {
       success: true,
       data: {
         ...agency,
+        zipcodes: agencyRow.zipcodes || agencyRow.primary_zipcodes || [],  // Ensure zipcodes are included
         subscription: subscription || null,
         territories_count: territoriesCount || 0
       }
@@ -1037,5 +1051,122 @@ router.put('/profile', authenticateAgency, async (req, res) => {
     res.status(500).json({ success: false, message: 'Failed to update profile', error: error.message });
   }
 });
+
+
+
+/**
+ * POST /api/mobile/save-device-token
+ * Save device token for web or mobile (no auth required)
+ * Body:
+ * {
+ *   token: string,
+ *   platform: "web" | "android" | "ios"
+ * }
+ */
+/** 
+ * PUBLIC: Save Web / Mobile device token 
+ * (No authentication required for Flutter Web)
+ */
+/**
+ * PUBLIC: Save Web / Mobile device token (NO AUTH)
+ */
+// PUBLIC: Save Web / Mobile device token
+// PUBLIC: Save Web / Mobile device token
+router.post("/save-device-token", async (req, res) => {
+  try {
+    const { token, platform, agency_id } = req.body;
+
+    if (!token) return res.status(400).json({ success: false, message: "token is required" });
+    if (!agency_id) return res.status(400).json({ success: false, message: "agency_id is required" });
+
+    console.log("💾 Inserting device token", { token, platform, agency_id });
+
+    const { error } = await supabase.from("agency_devices").insert([
+      {
+        agency_id,
+        device_token: token,
+        platform: platform || "web",
+        device_type: platform || "web",
+        is_active: true,
+        push_enabled: true,
+        created_at: new Date().toISOString(),
+        last_seen: new Date().toISOString(),
+      },
+    ]);
+
+    if (error) {
+      console.error("❌ Insert error:", error);
+      return res.status(500).json({
+        success: false,
+        message: "Failed to save device token",
+        error: error.message,
+      });
+    }
+
+    return res.json({ success: true, message: "Device token saved successfully" });
+
+  } catch (err) {
+    console.error("❌ save-device-token error:", err);
+    return res.status(500).json({ success: false, message: "Server error", error: err.message });
+  }
+});
+
+
+
+
+
+
+
+
+
+/**
+ * POST /api/v1/agencies/update-fcm
+ * Save or update device FCM token for this agency
+ */
+// router.post('/update-fcm', authenticateAgency, async (req, res) => {
+//   try {
+//     const agencyId = req.agency.id;
+//     const { fcm_token } = req.body;
+
+//     if (!fcm_token) {
+//       return res.status(400).json({
+//         success: false,
+//         message: "fcm_token is required"
+//       });
+//     }
+
+//     console.log("📌 Updating FCM for agency:", agencyId, "Token:", fcm_token);
+
+//     const { error } = await supabase
+//       .from('agencies')
+//       .update({
+//         fcm_token: fcm_token,
+//         updated_at: new Date().toISOString()
+//       })
+//       .eq('id', agencyId);
+
+//     if (error) {
+//       console.error("❌ Failed to update FCM:", error.message);
+//       return res.status(500).json({
+//         success: false,
+//         message: "Failed to update FCM token",
+//         error: error.message
+//       });
+//     }
+
+//     return res.json({
+//       success: true,
+//       message: "FCM token updated successfully"
+//     });
+
+//   } catch (error) {
+//     console.error("❌ Error updating FCM token:", error);
+//     res.status(500).json({
+//       success: false,
+//       message: "Server error updating FCM token"
+//     });
+//   }
+// });
+
 
 module.exports = router;

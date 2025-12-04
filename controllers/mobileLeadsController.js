@@ -8,98 +8,74 @@ const supabase = require('../config/supabaseClient');
 /**
  * GET /api/mobile/leads
  * Get agency's assigned leads with filters
+ * Uses audit_logs and unified_leads tables
  */
 async function getLeads(req, res) {
   try {
     const agencyId = req.agency.id;
     const { status, from_date, to_date, limit = 50, page = 1 } = req.query;
 
-    // Build query - fetch lead_assignments first, then get leads separately
-    // This avoids the relationship cache issue
+    // Build query from audit_logs
     let query = supabase
-      .from('lead_assignments')
+      .from('audit_logs')
       .select('*')
       .eq('agency_id', agencyId);
 
-    // Apply filters
+    // Apply status filter
     if (status) {
-      query = query.eq('status', status);
+      query = query.eq('action_status', status);
     }
 
-    if (from_date || to_date) {
-      let leadsQuery = supabase.from('leads').select('id');
-      if (from_date) {
-        leadsQuery = leadsQuery.gte('created_at', from_date);
-      }
-      if (to_date) {
-        leadsQuery = leadsQuery.lte('created_at', to_date);
-      }
-      const { data: filteredLeads } = await leadsQuery;
-      if (filteredLeads && filteredLeads.length > 0) {
-        query = query.in('lead_id', filteredLeads.map(l => l.id));
-      } else {
-        // No leads match date filter
-        return res.json({
-          success: true,
-          leads: [],
-          pagination: {
-            page: parseInt(page),
-            limit: parseInt(limit),
-            total: 0,
-            totalPages: 0
-          }
-        });
-      }
+    // Apply date filters
+    if (from_date) {
+      query = query.gte('created_at', from_date);
+    }
+    if (to_date) {
+      query = query.lte('created_at', to_date);
     }
 
     // Get total count
     const { count } = await supabase
-      .from('lead_assignments')
+      .from('audit_logs')
       .select('*', { count: 'exact', head: true })
       .eq('agency_id', agencyId);
 
     // Apply pagination
     const offset = (parseInt(page) - 1) * parseInt(limit);
     query = query.range(offset, offset + parseInt(limit) - 1);
-    query = query.order('assigned_at', { ascending: false });
+    query = query.order('created_at', { ascending: false });
 
-    const { data: assignments, error } = await query;
+    const { data: auditLogs, error } = await query;
 
     if (error) throw error;
 
-    // Get lead IDs from assignments
-    const leadIds = (assignments || []).map(a => a.lead_id).filter(Boolean);
-    
-    // Fetch leads separately to avoid relationship cache issue
-    let leadsData = [];
-    if (leadIds.length > 0) {
-      const { data: leads, error: leadsError } = await supabase
-        .from('leads')
-        .select('id, first_name, last_name, email, phone, address, city, state, zipcode, status, source, notes, assigned_at, created_at, updated_at')
-        .in('id', leadIds);
-      
-      if (leadsError) {
-        console.error('Error fetching leads:', leadsError);
-        throw leadsError;
-      }
-      
-      // Create a map of lead_id -> lead data
-      const leadsMap = new Map((leads || []).map(l => [l.id, l]));
-      
-      // Transform response by combining assignment and lead data
-      leadsData = (assignments || [])
-        .filter(a => leadsMap.has(a.lead_id))
-        .map(a => ({
-          ...leadsMap.get(a.lead_id),
-          assignment_status: a.status,
-          assignment_id: a.id,
-          assigned_at: a.assigned_at,
-          accepted_at: a.accepted_at,
-          rejected_at: a.rejected_at
-        }));
-    }
-    
-    const leads = leadsData;
+    // Transform audit_logs to lead format
+    const leads = (auditLogs || []).map(log => {
+      const leadData = log.lead_data || {};
+      return {
+        id: log.lead_id || leadData.id,
+        first_name: leadData.first_name || leadData.firstName || leadData.lead_name || leadData.name || 'Unknown',
+        last_name: leadData.last_name || leadData.lastName || '',
+        phone: leadData.phone_number || leadData.phone || '',
+        email: leadData.email || '',
+        city: leadData.city || '',
+        zipcode: leadData.zipcode || leadData.zip || '',
+        state: leadData.state || '',
+        address: leadData.address || leadData.street || '',
+        urgency_level: leadData.urgency_level || leadData.urgency || 'MODERATE',
+        notes: leadData.notes || leadData.description || '',
+        service_type: leadData.service_type || leadData.serviceType || '',
+        industry: leadData.industry || log.industry || '',
+        status: log.action_status || 'assigned',
+        created_at: log.created_at,
+        assigned_at: log.created_at,
+        budget_range: leadData.budget_range || leadData.budget || '',
+        property_type: leadData.property_type || '',
+        timeline: leadData.timeline || '',
+        assignment_status: log.action_status,
+        assignment_id: log.id
+      };
+    });
 
     res.json({
       success: true,
@@ -124,21 +100,22 @@ async function getLeads(req, res) {
 /**
  * GET /api/mobile/leads/:id
  * Get detailed information for a specific lead
+ * Uses audit_logs and unified_leads tables
  */
 async function getLeadById(req, res) {
   try {
     const agencyId = req.agency.id;
     const leadId = parseInt(req.params.id);
 
-    // Verify lead is assigned to agency
-    const { data: assignment, error: assignmentError } = await supabase
-      .from('lead_assignments')
-      .select('*, leads (*)')
+    // Get from audit_logs
+    const { data: auditLog, error: auditError } = await supabase
+      .from('audit_logs')
+      .select('*')
       .eq('lead_id', leadId)
       .eq('agency_id', agencyId)
       .single();
 
-    if (assignmentError || !assignment) {
+    if (auditError || !auditLog) {
       return res.status(404).json({
         success: false,
         message: 'Lead not found or not assigned to your agency'
@@ -156,9 +133,10 @@ async function getLeadById(req, res) {
         .order('created_at', { ascending: false });
       notes = leadNotes || [];
     } catch (e) {
-      // Table might not exist, use lead.notes field instead
-      if (assignment.leads && assignment.leads.notes) {
-        notes = [{ note_text: assignment.leads.notes, created_at: assignment.leads.updated_at }];
+      // Table might not exist, use lead_data.notes field instead
+      const leadData = auditLog.lead_data || {};
+      if (leadData.notes) {
+        notes = [{ note_text: leadData.notes, created_at: auditLog.created_at }];
       }
     }
 
@@ -177,20 +155,37 @@ async function getLeadById(req, res) {
       // Table might not exist, that's ok
     }
 
-    const leadData = {
-      ...assignment.leads,
-      assignment_status: assignment.status,
-      assignment_id: assignment.id,
-      assigned_at: assignment.assigned_at,
-      accepted_at: assignment.accepted_at,
-      rejected_at: assignment.rejected_at,
-      notes,
-      interactions
+    // Transform audit_log to lead format
+    const leadData = auditLog.lead_data || {};
+    const transformedLead = {
+      id: auditLog.lead_id || leadData.id,
+      first_name: leadData.first_name || leadData.firstName || leadData.lead_name || leadData.name || 'Unknown',
+      last_name: leadData.last_name || leadData.lastName || '',
+      phone: leadData.phone_number || leadData.phone || '',
+      email: leadData.email || '',
+      city: leadData.city || '',
+      zipcode: leadData.zipcode || leadData.zip || '',
+      state: leadData.state || '',
+      address: leadData.address || leadData.street || '',
+      urgency_level: leadData.urgency_level || leadData.urgency || 'MODERATE',
+      notes: leadData.notes || leadData.description || '',
+      service_type: leadData.service_type || leadData.serviceType || '',
+      industry: leadData.industry || auditLog.industry || '',
+      status: auditLog.action_status || 'assigned',
+      created_at: auditLog.created_at,
+      assigned_at: auditLog.created_at,
+      budget_range: leadData.budget_range || leadData.budget || '',
+      property_type: leadData.property_type || '',
+      timeline: leadData.timeline || '',
+      assignment_status: auditLog.action_status,
+      assignment_id: auditLog.id,
+      notes: notes,
+      interactions: interactions
     };
 
     res.json({
       success: true,
-      data: leadData
+      data: transformedLead
     });
   } catch (error) {
     console.error('Error fetching lead:', error);
@@ -205,6 +200,7 @@ async function getLeadById(req, res) {
 /**
  * PUT /api/mobile/leads/:id/accept
  * Accept a lead assignment
+ * Uses audit_logs table
  */
 async function acceptLead(req, res) {
   try {
@@ -213,49 +209,39 @@ async function acceptLead(req, res) {
     const { notes } = req.body;
 
     // Verify lead is assigned to agency
-    const { data: assignment, error: assignmentError } = await supabase
-      .from('lead_assignments')
+    const { data: auditLog, error: auditError } = await supabase
+      .from('audit_logs')
       .select('*')
       .eq('lead_id', leadId)
       .eq('agency_id', agencyId)
-      .eq('status', 'pending')
+      .eq('action_status', 'assigned')
       .single();
 
-    if (assignmentError || !assignment) {
+    if (auditError || !auditLog) {
       return res.status(404).json({
         success: false,
         message: 'Lead assignment not found or already processed'
       });
     }
 
-    // Update lead assignment
+    // Update audit_log status
+    const updateData = {
+      action_status: 'contacted'
+    };
+
+    // Update lead_data with notes if provided
+    if (notes) {
+      const leadData = auditLog.lead_data || {};
+      leadData.notes = notes;
+      updateData.lead_data = leadData;
+    }
+
     const { error: updateError } = await supabase
-      .from('lead_assignments')
-      .update({
-        status: 'accepted',
-        accepted_at: new Date().toISOString()
-      })
-      .eq('id', assignment.id);
+      .from('audit_logs')
+      .update(updateData)
+      .eq('id', auditLog.id);
 
     if (updateError) throw updateError;
-
-    // Update lead status
-    const { error: leadUpdateError } = await supabase
-      .from('leads')
-      .update({
-        status: 'contacted',
-        assigned_to_agency_id: agencyId,
-        assigned_at: new Date().toISOString(),
-        accepted_at: new Date().toISOString(),
-        notes: notes || undefined,
-        updated_at: new Date().toISOString()
-      })
-      .eq('id', leadId);
-
-    if (leadUpdateError) {
-      console.warn('Error updating lead status:', leadUpdateError);
-      // Continue anyway - assignment was updated
-    }
 
     // Create notification (if notifications table exists)
     try {
@@ -287,6 +273,7 @@ async function acceptLead(req, res) {
 /**
  * PUT /api/mobile/leads/:id/reject
  * Reject a lead assignment (triggers round-robin reassignment)
+ * Uses audit_logs table
  */
 async function rejectLead(req, res) {
   try {
@@ -295,48 +282,33 @@ async function rejectLead(req, res) {
     const { reason } = req.body;
 
     // Verify lead is assigned to agency
-    const { data: assignment, error: assignmentError } = await supabase
-      .from('lead_assignments')
-      .select('*, leads (*)')
+    const { data: auditLog, error: auditError } = await supabase
+      .from('audit_logs')
+      .select('*')
       .eq('lead_id', leadId)
       .eq('agency_id', agencyId)
-      .eq('status', 'pending')
       .single();
 
-    if (assignmentError || !assignment) {
+    if (auditError || !auditLog) {
       return res.status(404).json({
         success: false,
         message: 'Lead assignment not found or already processed'
       });
     }
 
-    const lead = assignment.leads;
+    // Update audit_log status to rejected
+    const leadData = auditLog.lead_data || {};
+    leadData.rejection_reason = reason || 'Rejected by agency';
 
-    // Update lead assignment
     const { error: updateError } = await supabase
-      .from('lead_assignments')
+      .from('audit_logs')
       .update({
-        status: 'rejected',
-        rejected_at: new Date().toISOString()
+        action_status: 'rejected',
+        lead_data: leadData
       })
-      .eq('id', assignment.id);
+      .eq('id', auditLog.id);
 
     if (updateError) throw updateError;
-
-    // Update lead status to pending_reassignment
-    const { error: leadUpdateError } = await supabase
-      .from('leads')
-      .update({
-        status: 'pending_reassignment',
-        rejection_reason: reason || 'Rejected by agency',
-        rejected_at: new Date().toISOString(),
-        updated_at: new Date().toISOString()
-      })
-      .eq('id', leadId);
-
-    if (leadUpdateError) {
-      console.warn('Error updating lead:', leadUpdateError);
-    }
 
     // Log rejection action
     try {
@@ -345,7 +317,7 @@ async function rejectLead(req, res) {
         action: 'lead_rejected',
         resource_type: 'lead',
         resource_id: leadId.toString(),
-        metadata: { 
+        metadata: {
           agency_id: agencyId,
           rejection_reason: reason || 'No reason provided'
         },
@@ -360,25 +332,30 @@ async function rejectLead(req, res) {
     let redistributionResult = null;
     try {
       const leadDistributionService = require('../services/leadDistributionService');
-      
-      // Get full lead data for re-distribution
+
+      // Get full lead data from unified_leads
       const { data: fullLead, error: leadFetchError } = await supabase
-        .from('leads')
+        .from('unified_leads')
         .select('*')
         .eq('id', leadId)
         .single();
 
       if (leadFetchError || !fullLead) {
-        throw new Error('Could not fetch lead for re-distribution');
+        console.warn('Could not fetch lead from unified_leads for re-distribution');
+        // Use lead_data from audit_log as fallback
+        redistributionResult = await leadDistributionService.distributeLead(
+          auditLog.lead_data,
+          [agencyId] // Exclude the rejecting agency
+        );
+      } else {
+        // Re-distribute, excluding the agency that rejected
+        redistributionResult = await leadDistributionService.distributeLead(
+          fullLead,
+          [agencyId] // Exclude the rejecting agency
+        );
       }
 
-      // Re-distribute, excluding the agency that rejected
-      redistributionResult = await leadDistributionService.distributeLead(
-        fullLead,
-        [agencyId] // Exclude the rejecting agency
-      );
-
-      if (redistributionResult.success) {
+      if (redistributionResult?.success) {
         // Log successful re-assignment
         try {
           const auditService = require('../services/auditService');
@@ -391,42 +368,14 @@ async function rejectLead(req, res) {
         } catch (e) {
           console.warn('Could not log re-assignment:', e.message);
         }
-
-        // Update lead status to assigned
-        await supabase
-          .from('leads')
-          .update({
-            status: 'assigned',
-            assigned_agency_id: redistributionResult.agency_id,
-            assigned_at: new Date().toISOString(),
-            updated_at: new Date().toISOString()
-          })
-          .eq('id', leadId);
-      } else {
-        // No eligible agencies found - set status to unassigned
-        await supabase
-          .from('leads')
-          .update({
-            status: 'unassigned',
-            updated_at: new Date().toISOString()
-          })
-          .eq('id', leadId);
       }
     } catch (e) {
       console.error('Could not reassign lead via round-robin:', e.message);
-      // Set lead to unassigned if re-distribution failed
-      await supabase
-        .from('leads')
-        .update({
-          status: 'unassigned',
-          updated_at: new Date().toISOString()
-        })
-        .eq('id', leadId);
     }
 
     res.json({
       success: true,
-      message: redistributionResult?.success 
+      message: redistributionResult?.success
         ? 'Lead rejected and reassigned to another agency successfully'
         : 'Lead rejected. Re-assignment attempted but no eligible agencies found.',
       data: redistributionResult ? {
@@ -448,6 +397,7 @@ async function rejectLead(req, res) {
 /**
  * PUT /api/mobile/leads/:id/status
  * Update lead status
+ * Uses audit_logs table
  */
 async function updateLeadStatus(req, res) {
   try {
@@ -455,8 +405,8 @@ async function updateLeadStatus(req, res) {
     const leadId = parseInt(req.params.id);
     const { status, notes } = req.body;
 
-    // Validate status
-    const validStatuses = ['new', 'contacted', 'qualified', 'converted', 'rejected'];
+    // Validate status (using action_status values)
+    const validStatuses = ['assigned', 'contacted', 'qualified', 'converted', 'rejected'];
     if (!validStatuses.includes(status)) {
       return res.status(400).json({
         success: false,
@@ -465,14 +415,14 @@ async function updateLeadStatus(req, res) {
     }
 
     // Verify lead is assigned to agency
-    const { data: assignment, error: assignmentError } = await supabase
-      .from('lead_assignments')
+    const { data: auditLog, error: auditError } = await supabase
+      .from('audit_logs')
       .select('*')
       .eq('lead_id', leadId)
       .eq('agency_id', agencyId)
       .single();
 
-    if (assignmentError || !assignment) {
+    if (auditError || !auditLog) {
       return res.status(404).json({
         success: false,
         message: 'Lead not found or not assigned to your agency'
@@ -480,26 +430,21 @@ async function updateLeadStatus(req, res) {
     }
 
     // Get previous status for history
-    const { data: currentLead } = await supabase
-      .from('leads')
-      .select('status')
-      .eq('id', leadId)
-      .single();
+    const previousStatus = auditLog.action_status || 'unknown';
 
-    // Update lead status
-    const updates = {
-      status,
-      updated_at: new Date().toISOString()
-    };
-
+    // Update audit_log with new status
+    const leadData = auditLog.lead_data || {};
     if (notes) {
-      updates.notes = notes;
+      leadData.notes = notes;
     }
 
-    const { data: updatedLead, error: updateError } = await supabase
-      .from('leads')
-      .update(updates)
-      .eq('id', leadId)
+    const { data: updatedLog, error: updateError } = await supabase
+      .from('audit_logs')
+      .update({
+        action_status: status,
+        lead_data: leadData
+      })
+      .eq('id', auditLog.id)
       .select()
       .single();
 
@@ -509,7 +454,7 @@ async function updateLeadStatus(req, res) {
     try {
       await supabase.from('lead_status_history').insert({
         lead_id: leadId,
-        previous_status: currentLead?.status || 'unknown',
+        previous_status: previousStatus,
         new_status: status,
         changed_by_agency_id: agencyId,
         notes,
@@ -522,7 +467,11 @@ async function updateLeadStatus(req, res) {
     res.json({
       success: true,
       message: 'Lead status updated successfully',
-      data: updatedLead
+      data: {
+        id: leadId,
+        status: status,
+        ...leadData
+      }
     });
   } catch (error) {
     console.error('Error updating lead status:', error);
@@ -537,6 +486,7 @@ async function updateLeadStatus(req, res) {
 /**
  * PUT /api/mobile/leads/:id/view
  * Mark lead as viewed (analytics tracking)
+ * Uses audit_logs table
  */
 async function markLeadViewed(req, res) {
   try {
@@ -544,14 +494,14 @@ async function markLeadViewed(req, res) {
     const leadId = parseInt(req.params.id);
 
     // Verify lead is assigned to agency
-    const { data: assignment, error: assignmentError } = await supabase
-      .from('lead_assignments')
+    const { data: auditLog, error: auditError } = await supabase
+      .from('audit_logs')
       .select('*')
       .eq('lead_id', leadId)
       .eq('agency_id', agencyId)
       .single();
 
-    if (assignmentError || !assignment) {
+    if (auditError || !auditLog) {
       return res.status(404).json({
         success: false,
         message: 'Lead not found or not assigned to your agency'
@@ -587,6 +537,7 @@ async function markLeadViewed(req, res) {
 /**
  * POST /api/mobile/leads/:id/call
  * Track phone call made to lead
+ * Uses audit_logs table
  */
 async function trackCall(req, res) {
   try {
@@ -595,14 +546,14 @@ async function trackCall(req, res) {
     const { duration_seconds, call_outcome } = req.body;
 
     // Verify lead is assigned to agency
-    const { data: assignment, error: assignmentError } = await supabase
-      .from('lead_assignments')
+    const { data: auditLog, error: auditError } = await supabase
+      .from('audit_logs')
       .select('*')
       .eq('lead_id', leadId)
       .eq('agency_id', agencyId)
       .single();
 
-    if (assignmentError || !assignment) {
+    if (auditError || !auditLog) {
       return res.status(404).json({
         success: false,
         message: 'Lead not found or not assigned to your agency'
@@ -625,21 +576,14 @@ async function trackCall(req, res) {
       console.warn('Could not insert interaction:', e.message);
     }
 
-    // Optionally update lead status to 'contacted' if still 'new'
-    const { data: currentLead } = await supabase
-      .from('leads')
-      .select('status')
-      .eq('id', leadId)
-      .single();
-
-    if (currentLead && currentLead.status === 'new') {
+    // Optionally update lead status to 'contacted' if still 'assigned'
+    if (auditLog.action_status === 'assigned') {
       await supabase
-        .from('leads')
+        .from('audit_logs')
         .update({
-          status: 'contacted',
-          updated_at: new Date().toISOString()
+          action_status: 'contacted'
         })
-        .eq('id', leadId);
+        .eq('id', auditLog.id);
     }
 
     // Get updated call count
@@ -675,6 +619,7 @@ async function trackCall(req, res) {
 /**
  * POST /api/mobile/leads/:id/notes
  * Add notes/comments to a lead
+ * Uses audit_logs table
  */
 async function addNotes(req, res) {
   try {
@@ -690,14 +635,14 @@ async function addNotes(req, res) {
     }
 
     // Verify lead is assigned to agency
-    const { data: assignment, error: assignmentError } = await supabase
-      .from('lead_assignments')
+    const { data: auditLog, error: auditError } = await supabase
+      .from('audit_logs')
       .select('*')
       .eq('lead_id', leadId)
       .eq('agency_id', agencyId)
       .single();
 
-    if (assignmentError || !assignment) {
+    if (auditError || !auditLog) {
       return res.status(404).json({
         success: false,
         message: 'Lead not found or not assigned to your agency'
@@ -722,29 +667,24 @@ async function addNotes(req, res) {
         noteId = newNote.id;
       }
     } catch (e) {
-      // Table might not exist, fall back to updating leads.notes
-      console.warn('lead_notes table not available, using leads.notes field');
-      
-      // Append to existing notes
-      const { data: currentLead } = await supabase
-        .from('leads')
-        .select('notes')
-        .eq('id', leadId)
-        .single();
+      // Table might not exist, fall back to updating lead_data.notes
+      console.warn('lead_notes table not available, using lead_data.notes field');
 
+      const leadData = auditLog.lead_data || {};
       const timestamp = new Date().toISOString();
-      const existingNotes = currentLead?.notes || '';
-      const updatedNotes = existingNotes 
+      const existingNotes = leadData.notes || '';
+      const updatedNotes = existingNotes
         ? `${existingNotes}\n[${timestamp}]: ${notes.trim()}`
         : `[${timestamp}]: ${notes.trim()}`;
 
+      leadData.notes = updatedNotes;
+
       await supabase
-        .from('leads')
+        .from('audit_logs')
         .update({
-          notes: updatedNotes,
-          updated_at: new Date().toISOString()
+          lead_data: leadData
         })
-        .eq('id', leadId);
+        .eq('id', auditLog.id);
     }
 
     res.json({

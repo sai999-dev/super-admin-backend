@@ -8,62 +8,57 @@ const crypto = require('crypto');
 const path = require('path');
 const fs = require('fs');
 
-// For file storage - configure based on your setup
-// Options: S3, local filesystem, Supabase Storage
-const STORAGE_TYPE = process.env.STORAGE_TYPE || 'local'; // 'local', 's3', 'supabase'
+// For file storage - use Supabase Storage by default
+// Options: 'supabase' (default), 'local', 's3'
+const STORAGE_TYPE = process.env.STORAGE_TYPE || 'supabase';
+
+// Supabase bucket name for agency documents
+const BUCKET_NAME = 'agency_documents';
+
+// Helper function removed - backend only returns file_path
+// Frontend should use file_path to load documents from Supabase Storage
 
 /**
  * Helper: Save file to storage
+ * Uploads to Supabase Storage bucket 'agency_documents' in folder structure: agency_id/filename
  */
 async function saveFile(file, agencyId) {
   const timestamp = Date.now();
   const randomStr = crypto.randomBytes(8).toString('hex');
   const ext = path.extname(file.originalname);
-  const fileName = `${agencyId}_${timestamp}_${randomStr}${ext}`;
+  const fileName = `${timestamp}_${randomStr}${ext}`;
+  const storagePath = `${agencyId}/${fileName}`;
 
-  if (STORAGE_TYPE === 'local') {
-    // Local filesystem storage
-    const uploadDir = path.join(__dirname, '..', 'uploads', 'verification-documents');
-    if (!fs.existsSync(uploadDir)) {
-      fs.mkdirSync(uploadDir, { recursive: true });
-    }
+  if (STORAGE_TYPE === 'supabase') {
+    // Supabase Storage - Upload to agency_documents bucket
+    console.log(`📤 Uploading to Supabase Storage: ${BUCKET_NAME}/${storagePath}`);
     
-    const filePath = path.join(uploadDir, fileName);
-    fs.writeFileSync(filePath, file.buffer);
-    return {
-      file_path: `/uploads/verification-documents/${fileName}`,
-      file_name: file.originalname,
-      storage_type: 'local'
-    };
-  } else if (STORAGE_TYPE === 's3') {
-    // AWS S3 storage (implement if needed)
-    // const AWS = require('aws-sdk');
-    // ... S3 upload logic
-    throw new Error('S3 storage not yet implemented');
-  } else if (STORAGE_TYPE === 'supabase') {
-    // Supabase Storage
     const { data, error } = await supabase.storage
-      .from('verification-documents')
-      .upload(`${agencyId}/${fileName}`, file.buffer, {
+      .from(BUCKET_NAME)
+      .upload(storagePath, file.buffer, {
         contentType: file.mimetype,
-        upsert: false
+        upsert: false,
+        cacheControl: '3600'
       });
 
-    if (error) throw error;
+    if (error) {
+      console.error('❌ Supabase Storage upload error:', error);
+      throw new Error(`Failed to upload to Supabase Storage: ${error.message}`);
+    }
 
-    const { data: { publicUrl } } = supabase.storage
-      .from('verification-documents')
-      .getPublicUrl(`${agencyId}/${fileName}`);
+    console.log('✅ File uploaded to Supabase Storage:', data.path);
 
     return {
-      file_path: `${agencyId}/${fileName}`,
+      file_path: storagePath, // e.g., "agency_id/filename.ext"
       file_name: file.originalname,
       storage_type: 'supabase',
-      public_url: publicUrl
+      bucket: BUCKET_NAME
     };
+  } else {
+    throw new Error(`Invalid storage type: ${STORAGE_TYPE}. Only 'supabase' is supported.`);
   }
 
-  throw new Error('Invalid storage type');
+  throw new Error(`Invalid storage type: ${STORAGE_TYPE}`);
 }
 
 /**
@@ -72,10 +67,28 @@ async function saveFile(file, agencyId) {
  */
 async function uploadDocument(req, res) {
   try {
-    const agencyId = req.agency.id;
+    console.log('📤 Document upload request received');
+    console.log('📋 Request body keys:', Object.keys(req.body || {}));
+    console.log('📋 File info:', req.file ? {
+      originalname: req.file.originalname,
+      mimetype: req.file.mimetype,
+      size: req.file.size,
+      hasBuffer: !!req.file.buffer
+    } : 'No file');
+
+    const agencyId = req.agency?.id;
     const file = req.file;
 
+    if (!agencyId) {
+      console.error('❌ No agency ID found in request');
+      return res.status(401).json({
+        success: false,
+        message: 'Authentication required'
+      });
+    }
+
     if (!file) {
+      console.warn('⚠️ No file uploaded');
       return res.status(400).json({
         success: false,
         message: 'Document file is required'
@@ -85,6 +98,7 @@ async function uploadDocument(req, res) {
     // Validate file type
     const allowedTypes = ['application/pdf', 'image/png', 'image/jpeg', 'image/jpg'];
     if (!allowedTypes.includes(file.mimetype)) {
+      console.warn('⚠️ Invalid file type:', file.mimetype);
       return res.status(400).json({
         success: false,
         message: 'Invalid file type. Only PDF, PNG, and JPG are allowed.'
@@ -94,36 +108,101 @@ async function uploadDocument(req, res) {
     // Validate file size (10MB max)
     const maxSize = 10 * 1024 * 1024; // 10MB
     if (file.size > maxSize) {
+      console.warn('⚠️ File too large:', file.size);
       return res.status(413).json({
         success: false,
         message: 'File size exceeds 10MB limit'
       });
     }
 
-    const { document_type = 'other', description } = req.body;
+    // Accept document_type from Flutter (snake_case) or documentType (camelCase)
+    const document_type = req.body.document_type || req.body.documentType || 'other';
+    const description = req.body.description || '';
+    // Accept document_name (required for "other" type, optional for others)
+    const document_name = req.body.document_name || req.body.documentName || null;
+    
+    console.log('📋 document_type (from Flutter):', req.body.document_type);
+    console.log('📋 documentType (camelCase):', req.body.documentType);
+    console.log('📋 document_name:', document_name);
+    console.log('📋 Final document_type used:', document_type);
+    
+    // Validate: If document_type is "other", document_name is required
+    if (document_type === 'other' && (!document_name || document_name.trim() === '')) {
+      console.warn('⚠️ document_name is required for "other" document type');
+      return res.status(400).json({
+        success: false,
+        message: 'document_name is required when document_type is "other"'
+      });
+    }
+    
+    console.log('💾 Saving file for agency:', agencyId);
 
     // Save file
-    const fileInfo = await saveFile(file, agencyId);
+    let fileInfo;
+    try {
+      fileInfo = await saveFile(file, agencyId);
+      console.log('✅ File saved successfully:', fileInfo);
+    } catch (saveError) {
+      console.error('❌ Error saving file:', saveError);
+      return res.status(500).json({
+        success: false,
+        message: 'Failed to save file',
+        error: process.env.NODE_ENV === 'development' ? saveError.message : undefined
+      });
+    }
 
-    // Insert document record
+    console.log('💾 Inserting document record into Supabase...');
+    
+    // Insert document record - only include columns that exist
+    // Note: created_at and updated_at are likely auto-generated by the database
+    const documentData = {
+      agency_id: agencyId,
+      document_type: document_type || 'other',
+      file_name: fileInfo.file_name,
+      file_path: fileInfo.file_path, // Storage path: agency_id/filename.ext
+      mime_type: file.mimetype,
+      description: description || null,
+      verification_status: 'pending',
+      status: 'PENDING'
+    };
+
+    // Add document_name if provided (required for "other" type, optional for others)
+    if (document_name && document_name.trim() !== '') {
+      documentData.document_name = document_name.trim();
+    }
+
+    // Add file size - use size_bytes (more common column name)
+    // If the table uses file_size instead, Supabase will tell us in the error
+    documentData.size_bytes = file.size;
+
+    console.log('📋 Document data to insert:', {
+      agency_id: documentData.agency_id,
+      document_type: documentData.document_type,
+      document_name: documentData.document_name || '(not set)',
+      file_name: documentData.file_name,
+      file_path: documentData.file_path.substring(0, 50) + '...',
+      mime_type: documentData.mime_type,
+      verification_status: documentData.verification_status
+    });
+
     const { data: document, error } = await supabase
-      .from('verification_documents')
-      .insert({
-        agency_id: agencyId,
-        document_type,
-        file_name: fileInfo.file_name,
-        file_path: fileInfo.file_path,
-        file_size: file.size,
-        mime_type: file.mimetype,
-        description: description || null,
-        verification_status: 'pending',
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString()
-      })
+      .from('agency_documents')
+      .insert(documentData)
       .select()
       .single();
 
-    if (error) throw error;
+    if (error) {
+      console.error('❌ Supabase insert error:', error);
+      console.error('❌ Error details:', {
+        message: error.message,
+        code: error.code,
+        details: error.details,
+        hint: error.hint
+      });
+      throw error;
+    }
+
+    console.log('✅ Document inserted successfully:', document?.id);
 
     // Send notification to admin (if notifications enabled)
     try {
@@ -156,7 +235,11 @@ async function uploadDocument(req, res) {
       success: true,
       message: 'Document uploaded successfully. Awaiting admin review.',
       data: {
-        document_id: document.id,
+        id: document.id,
+        document_type: document.document_type,
+        document_name: document.document_name || null,
+        file_name: document.file_name,
+        file_path: document.file_path, // Only return file_path for frontend to use
         verification_status: document.verification_status,
         uploaded_at: document.created_at
       }
@@ -179,28 +262,40 @@ async function getVerificationStatus(req, res) {
   try {
     const agencyId = req.agency.id;
 
-    // Get agency verification status
+    console.log('🔍 Fetching verification status for agency:', agencyId);
+
+    // Get agency verification status - only select columns that exist
     const { data: agency, error: agencyError } = await supabase
       .from('agencies')
-      .select('id, email, is_verified, verification_status')
+      .select('id, email, verification_status')
       .eq('id', agencyId)
       .single();
 
-    if (agencyError) throw agencyError;
+    if (agencyError) {
+      console.error('❌ Error fetching agency:', agencyError);
+      throw agencyError;
+    }
 
-    // Get latest document
-    const { data: documents } = await supabase
-      .from('verification_documents')
+    if (!agency) {
+      return res.status(404).json({
+        success: false,
+        message: 'Agency not found'
+      });
+    }
+
+    // Get latest document from agency_documents table
+    const { data: agencyDocs } = await supabase
+      .from('agency_documents')
       .select('*')
       .eq('agency_id', agencyId)
       .order('created_at', { ascending: false })
       .limit(1);
+    
+    const latestDocument = agencyDocs && agencyDocs.length > 0 ? agencyDocs[0] : null;
 
-    const latestDocument = documents && documents.length > 0 ? documents[0] : null;
-
-    // Determine overall status
-    const emailVerified = agency.is_verified || agency.verification_status === 'VERIFIED';
-    const documentStatus = latestDocument ? latestDocument.verification_status : 'no_document';
+    // Determine overall status - use verification_status column only
+    const emailVerified = agency.verification_status === 'VERIFIED' || agency.verification_status === 'verified';
+    const documentStatus = latestDocument ? (latestDocument.verification_status || latestDocument.status || 'pending') : 'no_document';
 
     let overallStatus = 'pending_verification';
     if (emailVerified && documentStatus === 'approved') {
@@ -216,7 +311,9 @@ async function getVerificationStatus(req, res) {
       document: latestDocument ? {
         id: latestDocument.id,
         document_type: latestDocument.document_type,
+        document_name: latestDocument.document_name || null,
         file_name: latestDocument.file_name,
+        file_path: latestDocument.file_path, // Only return file_path
         verification_status: latestDocument.verification_status,
         uploaded_at: latestDocument.created_at,
         reviewed_at: latestDocument.reviewed_at
@@ -247,32 +344,45 @@ async function getDocuments(req, res) {
   try {
     const agencyId = req.agency.id;
 
-    const { data: documents, error } = await supabase
-      .from('verification_documents')
+    console.log('📋 Fetching documents for agency:', agencyId);
+
+    // Fetch documents from agency_documents table
+    const { data: documents, error: fetchError } = await supabase
+      .from('agency_documents')
       .select('*')
       .eq('agency_id', agencyId)
       .order('created_at', { ascending: false });
 
-    if (error) throw error;
+    if (fetchError) {
+      console.error('❌ Error fetching from agency_documents:', fetchError);
+      throw fetchError;
+    }
+
+    console.log(`✅ Fetched ${documents.length} documents for agency ${agencyId}`);
 
     res.json({
       success: true,
-      documents: (documents || []).map(doc => ({
+      documents: documents.map(doc => ({
         id: doc.id,
         document_type: doc.document_type,
+        document_name: doc.document_name || null,
         file_name: doc.file_name,
-        verification_status: doc.verification_status,
-        uploaded_at: doc.created_at,
+        file_path: doc.file_path, // Only return file_path
+        verification_status: doc.verification_status || doc.status || 'pending',
+        uploaded_at: doc.created_at || doc.uploaded_at,
         description: doc.description,
-        rejection_reason: doc.rejection_reason
+        rejection_reason: doc.rejection_reason,
+        mime_type: doc.mime_type,
+        size_bytes: doc.size_bytes || doc.file_size
       }))
     });
   } catch (error) {
-    console.error('Error fetching documents:', error);
+    console.error('❌ Error fetching documents:', error);
+    console.error('❌ Error stack:', error.stack);
     res.status(500).json({
       success: false,
       message: 'Failed to fetch documents',
-      error: error.message
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
 }
@@ -286,7 +396,7 @@ async function listDocuments(req, res) {
     const { status, page = 1, limit = 20, agency_id } = req.query;
 
     let query = supabase
-      .from('verification_documents')
+      .from('agency_documents')
       .select(`
         *,
         agencies (
@@ -308,7 +418,7 @@ async function listDocuments(req, res) {
 
     // Get total count
     const { count } = await supabase
-      .from('verification_documents')
+      .from('agency_documents')
       .select('*', { count: 'exact', head: true });
 
     // Apply pagination
@@ -327,7 +437,9 @@ async function listDocuments(req, res) {
         agency_name: doc.agencies?.agency_name || doc.agencies?.business_name,
         agency_email: doc.agencies?.email,
         document_type: doc.document_type,
+        document_name: doc.document_name || null,
         file_name: doc.file_name,
+        file_path: doc.file_path, // Only return file_path
         verification_status: doc.verification_status,
         uploaded_at: doc.created_at,
         reviewed_at: doc.reviewed_at,
@@ -352,58 +464,14 @@ async function listDocuments(req, res) {
 
 /**
  * GET /api/admin/verification-documents/:id/download
- * Download document file
+ * Download document file - REMOVED
+ * Backend does not serve documents - frontend should use file_path to load from Supabase
  */
 async function downloadDocument(req, res) {
-  try {
-    const documentId = parseInt(req.params.id);
-
-    const { data: document, error } = await supabase
-      .from('verification_documents')
-      .select('*')
-      .eq('id', documentId)
-      .single();
-
-    if (error || !document) {
-      return res.status(404).json({
-        success: false,
-        message: 'Document not found'
-      });
-    }
-
-    // Handle different storage types
-    if (STORAGE_TYPE === 'local') {
-      const filePath = path.join(__dirname, '..', document.file_path);
-      if (fs.existsSync(filePath)) {
-        res.setHeader('Content-Type', document.mime_type || 'application/octet-stream');
-        res.setHeader('Content-Disposition', `attachment; filename="${document.file_name}"`);
-        return res.sendFile(filePath);
-      } else {
-        return res.status(404).json({
-          success: false,
-          message: 'File not found on server'
-        });
-      }
-    } else if (STORAGE_TYPE === 'supabase') {
-      // Generate signed URL for Supabase storage
-      const { data, error: urlError } = await supabase.storage
-        .from('verification-documents')
-        .createSignedUrl(document.file_path, 3600); // 1 hour expiry
-
-      if (urlError) throw urlError;
-
-      return res.redirect(data.signedUrl);
-    }
-
-    throw new Error('Storage type not configured for downloads');
-  } catch (error) {
-    console.error('Error downloading document:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Failed to download document',
-      error: error.message
-    });
-  }
+  return res.status(404).json({
+    success: false,
+    message: 'Document download endpoint removed. Use file_path from document metadata to load from Supabase Storage.'
+  });
 }
 
 /**
@@ -417,7 +485,7 @@ async function approveDocument(req, res) {
     const { notes } = req.body;
 
     const { data: document, error: fetchError } = await supabase
-      .from('verification_documents')
+      .from('agency_documents')
       .select('*, agencies (*)')
       .eq('id', documentId)
       .single();
@@ -431,9 +499,10 @@ async function approveDocument(req, res) {
 
     // Update document
     const { data: updated, error: updateError } = await supabase
-      .from('verification_documents')
+      .from('agency_documents')
       .update({
         verification_status: 'approved',
+        status: 'APPROVED',
         reviewed_by: adminId,
         reviewed_at: new Date().toISOString(),
         updated_at: new Date().toISOString()
@@ -505,7 +574,7 @@ async function rejectDocument(req, res) {
     }
 
     const { data: document, error: fetchError } = await supabase
-      .from('verification_documents')
+      .from('agency_documents')
       .select('*, agencies (*)')
       .eq('id', documentId)
       .single();
@@ -519,9 +588,10 @@ async function rejectDocument(req, res) {
 
     // Update document
     const { data: updated, error: updateError } = await supabase
-      .from('verification_documents')
+      .from('agency_documents')
       .update({
         verification_status: 'rejected',
+        status: 'REJECTED',
         reviewed_by: adminId,
         reviewed_at: new Date().toISOString(),
         rejection_reason,
